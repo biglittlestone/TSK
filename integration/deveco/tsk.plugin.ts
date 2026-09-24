@@ -192,47 +192,7 @@ export default {
       "tool.execute.before": async (input: any, output: any) => {
         // 默认 read 无损；TSK_READ_COMPRESS=1 时启用 read 骨架（受控复验「输入能否压」）
         const tool = input?.tool
-        if (tool === "read") {
-          await journal({ kind: "read-any", sessionID: input?.sessionID, file: String(output?.args?.filePath || "").slice(-36) }).catch(() => {})
-          const args = output?.args; if (!args || typeof args.filePath !== "string") return
-          if (args.offset != null && args.offset > 1) return // 分页=显式取回，不压
-          const rk = (input?.sessionID || "") + ":" + args.filePath
-          const readN = (readCount.get(rk) || 0) + 1; readCount.set(rk, readN)
-          if (readN > 1) return // 回读同一文件 → 取全文（escape-hatch：不用再压）
-          // 内联压缩（无子进程，同步）：读 .md 摘要改写到摘要文件，改写 filePath
-          // 目的：避免 Bun.spawn 子进程的 async 续体在 deveco hook 里不完成。
-          const f = await fs(); if (!f) return
-          let text = ""
-          try { text = f.readFileSync(args.filePath, "utf8") } catch { return }
-          if (/\.(md|markdown)$/i.test(args.filePath) && text.length > 1500) {
-            try {
-const lines = text.split("\n"); let title = ""
-              const sections: string[] = []; let curTitle = "", descGot = false, bulletGot = false
-              let size = 0; const cap = 1200
-              for (const l of lines) {
-                const tr = l.trim()
-                if (/^#\s/.test(l)) { if (!title) title = l.replace(/^#\s+/, "").trim(); continue }
-                if (/^#{2,4}\s/.test(l)) { curTitle = l.replace(/^#{2,4}\s+/, "").trim(); sections.push("\n### " + curTitle); size += curTitle.length; descGot = false; bulletGot = false; continue }
-                if (!curTitle || size > cap) continue
-                if (!descGot && /[A-Za-z0-9一-龥]/.test(tr) && tr.length > 6 && !/^[-*•]\s|^\d+[.、]\s/.test(tr)) { sections.push("  ¤ " + tr.slice(0, 90)); size += 92; descGot = true; continue }
-                if (!bulletGot && /^[-*•]\s|^\d+[.、]\s/.test(tr)) { sections.push("  · " + tr.replace(/^[-*•]\s+/, "").slice(0, 110)); size += 112; bulletGot = true; continue }
-                if (size > cap) break
-              }
-              if (size > 120 && size < text.length * 0.5) {
-                const h = (text.length * 31) >>> 0, sha = h.toString(16)
-                const dir = `${cwd}/.tsk-inline` // 摘要写工作区内（read 权限覆盖该树；写工作区外会被 deveco deny permission）
-                f.mkdirSync(dir, { recursive: true })
-                const sumFile = `${dir}/${sha}.md`
-                const abs = args.filePath.replace(/\\/g, "/")
-                const body = "【这是 TSK 压缩后的摘要，不是原始文档】\n# " + (title || "") + "\n" + sections.join("\n") + "\n\n—— 摘要结束 ————\n原文完整文档（未压缩全文）位于: \n" + abs + "\n如需更完整/更详细内容，请 Read 上面这个文件路径。\n"
-                f.writeFileSync(sumFile, body)
-                await journal({ kind: "read-skeleton-back", sessionID: input.sessionID, file: args.filePath, sumFile, origChars: text.length, sumChars: size }).catch(() => {})
-                args.filePath = sumFile
-              }
-            } catch {}
-          }
-          return
-        }
+        if (tool === "read") { void output; return } // 无损直通：不做输入改写（有损），沙箱执行走输出侧
         if (tool === "bash") {
           const cmd = String(output?.args?.command ?? output?.args?.cmd ?? "")
           // 永不启动模拟器/设备/上真机（用户强制，常驻）
