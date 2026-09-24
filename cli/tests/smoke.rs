@@ -1537,3 +1537,34 @@ fn auto_resume_interaction() {
 
     eprintln!("  [量化] resume: auto 档注入 RESUME 且省 ruleset 成本；off 档仍注入（历史线无损独立）");
 }
+
+// ---------- 新增功能冒烟：search / analyze (Think-in-Code) ----------
+
+/// `tsk search <q>`：对落盘 ext 全文按相关性返回「精确命中行窗」，原文保留。
+#[test]
+fn smoke_search_returns_exact_snippet() {
+    let (home, project) = setup();
+    let ext = home.join("s1/ext");
+    std::fs::create_dir_all(&ext).unwrap();
+    std::fs::write(ext.join("calc.txt"), "function onNumberInput(d){return d}\nconst CODE = 200 OK\nERROR 404 file not found\nvar calc = 3\n收益 error handling 示例\n").unwrap();
+
+    let out = run(&home, &["search", "error"], "", &project);
+    assert_eq!(out.status.code(), Some(0), "search should exit 0; stderr={}", String::from_utf8_lossy(&out.stderr));
+    let s = String::from_utf8_lossy(&out.stdout);
+    assert!(s.contains("ERROR 404 file not found"), "snippet must keep exact hit line, got: {s}");
+    assert!(s.contains("calc"), "should include neighbors, got: {s}");
+}
+
+/// `tsk analyze <file>`：Think-in-Code —— 沙箱/内置摘要把计算结果送上下文，不读全文。
+#[test]
+fn smoke_analyze_computes_summary() {
+    let (home, project) = setup();
+    let md = project.join("spec.md");
+    std::fs::write(&md, "# 测试方案\n\n## 用户故事1\n做计算器，四则运算。\n- 优先级 P1\n\n## 约束\n- 无网络、无存储\n").unwrap();
+
+    let out = run(&home, &["analyze", &p(&md)], "", &project);
+    assert_eq!(out.status.code(), Some(0), "analyze should exit 0; stderr={}", String::from_utf8_lossy(&out.stderr));
+    let s = String::from_utf8_lossy(&out.stdout);
+    assert!(s.contains("测试方案"), "should keep title, got: {s}");
+    assert!(s.contains("用户故事1"), "should keep section heading, got: {s}");
+}

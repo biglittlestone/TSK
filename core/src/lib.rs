@@ -10,6 +10,7 @@ pub mod inject;
 pub mod ledger;
 pub mod policy;
 pub mod sandbox;
+pub mod search;
 pub mod snapshot;
 pub mod storage;
 

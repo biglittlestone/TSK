@@ -1,0 +1,1 @@
+Run `tsk report --all` and summarize the **cumulative** savings across all sessions: total bytes saved with est-token preview, total injection cost, and the net. If the command errors (no ledger yet), say so plainly.

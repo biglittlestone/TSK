@@ -14,7 +14,7 @@
 **/.tsk/
 
 # 已分发构建
-/dist/
+/dist/**/bin/
 
 # node / bun
 node_modules/
@@ -22,3 +22,6 @@ bun.lockb
 
 # logs
 *.log
+/dist/**/bin/
+/dist/**/*.exe
+/dist/**/*.zip

@@ -57,6 +57,28 @@ enum Cmd {
         #[arg(trailing_var_arg = true)]
         args: Vec<String>,
     },
+    /// Search TSK's stored/externalized content (Think-in-Code 辅助). Returns exact-hit snippets.
+    Search {
+        /// Query terms (joined by space).
+        #[arg(trailing_var_arg = true)]
+        query: Vec<String>,
+        /// Restrict to one session id (default: all sessions).
+        #[arg(long)]
+        session: Option<String>,
+        /// Max hits (default 5).
+        #[arg(long, default_value_t = 5)]
+        top: usize,
+    },
+    /// Analyze a file in the sandbox (Think-in-Code): run `<lang> script`/inline summarizer over `file`,
+    /// print only stdout (the computed result) into context.
+    Analyze {
+        file: PathBuf,
+        /// Analysis script path; if omitted, use a built-in summary.
+        #[arg(short, long)]
+        script: Option<PathBuf>,
+        #[arg(long, default_value = "cli")]
+        session: String,
+    },
 }
 
 fn main() {
@@ -98,6 +120,8 @@ fn run() -> Result<String, String> {
         Cmd::Report { session, all, clean, cache_hit } => Ok(report(session, all, clean, cache_hit).to_string()),
         Cmd::Doctor { project } => Ok(doctor(&project).to_string()),
         Cmd::Exec { script, input, session, args } => Ok(exec(&script, &input, &session, &args)?),
+        Cmd::Search { query, session, top } => Ok(search_cmd(&query.join(" "), session.as_deref(), top)),
+        Cmd::Analyze { file, script, session } => Ok(analyze_cmd(&file, script.as_deref(), &session)?),
     }
 }
 
@@ -570,4 +594,46 @@ fn cache_hit(path: &PathBuf) -> String {
         return format!("cache-hit: no usage data in {}\n", path.display());
     }
     format!("cache-hit: {}/{} turns, {:.1}% cache read\n", turns, turns, reads as f64 * 100.0 / input as f64)
+}
+
+/// `tsk search <q>`：检索落盘全文，返回精确命中 snippet。
+fn search_cmd(query: &str, session: Option<&str>, top: usize) -> String {
+    use tsk_core::search;
+    let hits = search::search(query, top, session);
+    if hits.is_empty() {
+        return "tsk search: no hits.\n".to_string();
+    }
+    let mut out = format!("[tsk search] {query} — {} hit(s):\n", hits.len());
+    for (i, h) in hits.iter().enumerate() {
+        out.push_str(&format!("#{} [{:.2}]\n{}\n({} B)\n--- exact snippet ---\n{}\n\n", i + 1, h.score as f64 / 100.0, h.path.display(), h.bytes, h.snippet.trim()));
+    }
+    out
+}
+
+/// `tsk analyze <file>`：Think-in-Code —— 在沙箱里跑分析脚本（或缺省内置摘要），只输出 stdout。
+/// 内置摘要：对文本文件取标题 + ## 标题 + 每节首要点（与 deveco 内联摘要一致），cap 1.2KB。
+fn analyze_cmd(file: &std::path::Path, script: Option<&std::path::Path>, session: &str) -> Result<String, String> {
+    let file = file.canonicalize().map_err(|e| format!("cannot resolve {file:?}: {e}"))?;
+    let text = std::fs::read_to_string(&file).map_err(|e| format!("cannot read {}: {e}", file.display()))?;
+    if let Some(sc) = script {
+        let run = tsk_core::sandbox::run(sc, &[], &file).map_err(|e| format!("sandbox failed: {e}"))?;
+        return Ok(if run.stdout.trim().is_empty() { "(sandbox produced no stdout)".to_string() } else { run.stdout });
+    }
+    // 内置摘要
+    let mut title = "";
+    let mut sections: Vec<String> = Vec::new();
+    let mut cur = "";
+    let mut size = 0usize; let cap = 1200usize;
+    for l in text.lines() {
+        if l.starts_with("# ") && title.is_empty() { title = l[2..].trim(); continue; }
+        if l.starts_with("##") { cur = l.trim_start_matches('#').trim(); sections.push(format!("\n### {cur}")); size += cur.len(); continue; }
+        if !cur.is_empty() && (l.trim().starts_with("-") || l.trim().starts_with("*") || l.trim().starts_with(char::is_numeric)) {
+            sections.push(format!("  · {}", l.trim().chars().take(100).collect::<String>())); size += 104;
+            // numbers: 用首字符数字也行，简化：只取 dash/* 开头
+            let _ = size;
+        }
+        if size > cap { break; }
+    }
+    let _ = session;
+    Ok(format!("[tsk analyze of {}]\n# {}\n{}\n[原文: {} 字节]\n", file.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(), title, sections.join("\n"), text.len()))
 }

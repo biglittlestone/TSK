@@ -1,0 +1,1 @@
+Run `tsk report --clean` to reset TSK's token statistics: it deletes every session ledger file and the current-session marker. Confirm with the user before running, because the saved-token history is discarded (irreversible). Report the "cleared N ledger file(s)" output.
