@@ -243,6 +243,9 @@ fn report_all() -> String {
             for x in tsk_core::ledger::read_all(&p) {
                 total += saved_of(&x);
                 cost += cost_of(&x);
+                if let tsk_core::ledger::Entry::Retrieval(r) = &x {
+                    cost += r.retrieved_bytes.unwrap_or(0); // 回读成本计入净省扣减
+                }
                 *tools.entry(tool_of(&x).unwrap_or("?").to_string()).or_insert(0) += saved_of(&x);
             }
         }
@@ -513,6 +516,10 @@ fn summarize(entries: &[tsk_core::ledger::Entry]) -> String {
         }
         if matches!(e, tsk_core::ledger::Entry::Retrieval(_)) {
             retrievals += 1;
+        }
+        // 回读全文的字节成本计入净省扣减（净省 = 乐观 saved − 注入 − 回读）
+        if let tsk_core::ledger::Entry::Retrieval(r) = e {
+            cost += r.retrieved_bytes.unwrap_or(0);
         }
     }
     let net = total.saturating_sub(cost);

@@ -49,6 +49,9 @@ pub struct RetrievalEntry {
     pub reason: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub orig_bytes: Option<usize>,
+    /// 回读实际拉取的字节数（复读全文的成本；计入净收益的扣减）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retrieved_bytes: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

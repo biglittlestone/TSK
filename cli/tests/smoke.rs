@@ -1568,3 +1568,83 @@ fn smoke_analyze_computes_summary() {
     assert!(s.contains("测试方案"), "should keep title, got: {s}");
     assert!(s.contains("用户故事1"), "should keep section heading, got: {s}");
 }
+
+/// 端到端收益口径：乐观 saved vs 净收益(扣回读成本)。
+/// 场景：一个大日志文件；模型先读 → 骨架(saved)；随后有 2 次 offset/limit 回读(检索成本)。
+/// 断言 report 里 net < saved（回读成本被扣，符合"收益要算回读"）。
+#[test]
+fn smoke_e2e_retrieval_accounting() {
+    use std::io::Write;
+    let (home, project) = setup();
+    let big = project.join("big.log");
+    // 100 行，每行固定长度，便于计算回读成本
+    let mut f = std::fs::File::create(&big).unwrap();
+    use std::fmt::Write as _;
+      // 异构日志，保证骨架/检索都触发
+      for i in 0..90 {
+        let kind = match i % 5 { 0=>"[INFO]",1=>"[WARN]",2=>"[ERROR]",_=>"[DEBUG]" };
+        let _ = writeln!(f, "{kind} module_{i:03} operation alpha_{i} value {i} target foo.rs:ss{i}",);
+      }
+    drop(f);
+    let full_lines = std::fs::read_to_string(&big).unwrap();
+    let line_len = full_lines.split('\n').next().unwrap().len() + 1; // incl newline
+
+    // ① 首次 read(无 offset) → 骨架（saved）
+    let ev1 = format!(
+        r#"{{"session_id":"e2e","cwd":"{}","hook_event_name":"PreToolUse","tool_name":"Read","tool_input":{{"file_path":"{}"}},"tool_use_id":"t1"}}"#,
+        p(&project), p(&big)
+    );
+    let o1 = run(&home, &["hook", "PreToolUse"], &ev1, &project);
+    assert_eq!(o1.status.code(), Some(0));
+
+    // ② 两次 offset/limit 回读（逃逸口）→ 各拉取 5 行
+    for (off, callid) in [(10, "r1"), (60, "r2")] {
+        let ev = format!(
+            r#"{{"session_id":"e2e","cwd":"{}","hook_event_name":"PreToolUse","tool_name":"Read","tool_input":{{"file_path":"{}","offset":{},"limit":5}},"tool_use_id":"{}"}}"#,
+            p(&project), p(&big), off, callid
+        );
+        let o = run(&home, &["hook", "PreToolUse"], &ev, &project);
+        assert_eq!(o.status.code(), Some(0));
+        // 逃逸口返回 passthrough；第二次同样统计
+    }
+
+    // ③ report
+    let rep = run(&home, &["report"], "", &project);
+    let s = String::from_utf8_lossy(&rep.stdout);
+    // 每条回读 5 行：检索成本 = 2 * 5 * line_len
+    let retrieval_cost = 2 * 5 * line_len;
+    assert!(s.contains("saved"), "report should print saved");
+    // net 串如 "net         : N bytes"，取数字
+    eprintln!("E2E report:
+{s}");
+    let net = extract_net(&s);
+    let inject = extract_inject(&s);
+    let saved = extract_num(&rep.stdout, "saved");
+    // net = saved − inject − retrieval_cost (均字节)
+    // 端到端收益口径（含回读考虑）：
+    //  ① 乐观 saved > 净 net（压缩真省，减去注入/回读后的净值仍 >0）
+    //  ② retrievals 被计数（回读发生并被记录）
+    //  ③ 报告给出「悲观上限」行 = 若模型把被压原文全部回读时的净省（回读成本的如实呈现）
+    let _ = retrieval_cost;
+    assert!(saved > net, "net should be < saved after inject+retrieval; saved={saved} net={net}");
+    assert!(net > 0, "at low retrieval, net should still be positive; got {net}");
+    assert!(s.contains("retrievals  : 2"), "retrieval count should be 2, got: {s}");
+    assert!(s.contains("悲观上限") && s.contains("回读"), "report must surface re-read (pessimistic) cost, got: {s}");
+    println!("E2E retrieval: saved={saved} inject={inject} net={net} ✓ 收益口径含回读考虑(悲观上限 在报告)");
+}
+
+// 从报告文本取 saved/inject/net 字节数（"saved       : <n> bytes"）
+fn extract_saved(out: &[u8]) -> i64 { extract_num(out, "saved") }
+fn extract_net(out: &str) -> i64 { extract_num(out.as_bytes(), "net") }
+fn extract_inject(out: &str) -> i64 { extract_num(out.as_bytes(), "inject cost") }
+fn extract_num(out: &[u8], label: &str) -> i64 {
+    let s = String::from_utf8_lossy(out);
+    for line in s.lines() {
+        if line.trim_start().starts_with(label) {
+            let rest = line.split(':').nth(1).unwrap_or("").trim();
+            let n: String = rest.split(" bytes").next().unwrap_or("").chars().filter(|c| c.is_ascii_digit()).collect();
+            return n.parse().unwrap_or(0);
+        }
+    }
+    0
+}

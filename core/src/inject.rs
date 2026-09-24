@@ -37,6 +37,8 @@ pub fn pretooluse(_cfg: &Config, ev: &HookEvent) -> Output {
     // Escape hatch: an explicit offset/limit is a retrieval, never a compression.
     if policy::is_escape(input) {
         let bytes = file_bytes(orig_path);
+        // 回读成本：该 offset/limit 实际拉取的行窗字节（不是整文件）。用于净收益扣减。
+        let retrieved_bytes = Some(retrieval_bytes(orig_path, input.get("offset"), input.get("limit")));
         ledger::append(
             &ev.session_id,
             &Entry::Retrieval(ledger::RetrievalEntry {
@@ -46,10 +48,11 @@ pub fn pretooluse(_cfg: &Config, ev: &HookEvent) -> Output {
                 tool: "Read".into(),
                 reason: "escape_hatch_offset_limit".into(),
                 orig_bytes: bytes,
+                retrieved_bytes,
             }),
         );
         let orig = orig_path.to_string_lossy();
-        log_event(&ev.session_id, &format!("retrieval: escaped via offset/limit, {} bytes ({orig})", bytes.unwrap_or(0)));
+        log_event(&ev.session_id, &format!("retrieval: escaped via offset/limit, pull {} / {} bytes ({orig})", retrieved_bytes.unwrap_or(0), bytes.unwrap_or(0)));
         return Output::Passthrough;
     }
 
@@ -238,6 +241,20 @@ fn rewrite(input: &serde_json::Value, new_path: &Path) -> Output {
 /// Size of a file, if we can read its metadata. Used only for ledger accuracy.
 fn file_bytes(p: &Path) -> Option<usize> {
     std::fs::metadata(p).ok().map(|m| m.len() as usize)
+}
+
+/// 计算 offset/limit 回读实际拉取的字节数（用于回读成本记账，复读全文的成本）。
+fn retrieval_bytes(orig_path: &Path, offset: Option<&serde_json::Value>, limit: Option<&serde_json::Value>) -> usize {
+    // 回读成本（复读全文的 token）。读不到文件也返回估算，保证始终计入库存量口径。
+    let count = limit.and_then(|v| v.as_u64()).map(|v| v as usize).unwrap_or(80);
+    let start = offset.and_then(|v| v.as_u64()).map(|v| v as usize).unwrap_or(1);
+    if let Ok(text) = std::fs::read_to_string(orig_path) {
+        let lines: Vec<&str> = text.split('\n').collect();
+        let s = start.saturating_sub(1).min(lines.len());
+        let e = (s + count).min(lines.len());
+        return lines.get(s..e).unwrap_or(&[]).join("\n").len();
+    }
+    count * 40 // 估算：count 行 × 假设行宽
 }
 
 /// PostToolUse: v1 never rewrites a tool result (spike S2), so this is always a
