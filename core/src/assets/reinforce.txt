@@ -1,0 +1,6 @@
+// ~200 chars. Re-emitted every turn; measured -19% on top of the ruleset (spike S3+).
+
+TSK OUTPUT MODE ACTIVE (full). Enforce this reply: no pleasantries, no filler,
+no preamble, no recap. Prefer fragments. Code, commands, paths, errors stay
+verbatim. Max 2 sentences of prose unless code is the answer. Auto-clarity for
+safety content still applies.

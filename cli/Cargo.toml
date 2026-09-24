@@ -1,0 +1,18 @@
+[package]
+name = "tsk-cli"
+description = "TSK command-line entry: hook dispatch, init, report, doctor, exec"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "tsk"
+path = "src/main.rs"
+
+[dependencies]
+tsk-core = { path = "../core" }
+clap = { version = "4", default-features = false, features = ["std", "derive", "help"] }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+assert_cmd = "2"

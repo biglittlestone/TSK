@@ -1,0 +1,24 @@
+# Rust
+/target
+**/*.rs.bk
+
+# 实验/产物（不进仓）
+/integration/deveco/benchmark/
+**/.tsk-inline/
+**/.tsk-inline*
+/backround.html
+/nul
+
+# 状态/缓存
+~/.tsk
+**/.tsk/
+
+# 已分发构建
+/dist/
+
+# node / bun
+node_modules/
+bun.lockb
+
+# logs
+*.log

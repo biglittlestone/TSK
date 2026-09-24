@@ -1,0 +1,147 @@
+TSK (Token Saving Kit)
+Copyright 2026 TSK contributors
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+This product includes software developed as part of the TSK project.
+TSK is a new implementation written from scratch. It does not
+contain, link, or redistribute source code from any project
+acknowledged below. Entries marked [Adapted logic] follow the
+behavioral approach of the referenced project and were independently
+re-expressed in Rust by TSK authors; per good open-source practice
+and the terms of the applicable licenses, we acknowledge those
+origins here.
+
+=====================================================================
+ACKNOWLEDGMENTS
+=====================================================================
+
+TSK's design was informed by studying the following open-source /
+source-available projects. We thank their authors. Each entry states
+what TSK drew from the project. License information was verified
+against each project's LICENSE file at study time (2026-09).
+
+---------------------------------------------------------------------
+rtk (Rust Token Killer) — Apache-2.0
+---------------------------------------------------------------------
+Drew from rtk (ideas and lessons learned, no code):
+- The PreToolUse input-rewrite approach for tool-result compression.
+- The "recall storm" lesson: injecting custom recall tools increased
+  tool calls (+19.5% in rtk's own measurements), which motivated
+  TSK's decision to reuse the agent's native Read/Grep instead of
+  building a retrieval index.
+- The locale lesson: forcing LC_ALL=C breaks non-English (Chinese)
+  git output; TSK preserves system locale and uses bilingual
+  keyword dictionaries.
+
+---------------------------------------------------------------------
+caveman — MIT (hooks and skills portions)
+https://github.com/JuliusBrussee/caveman
+---------------------------------------------------------------------
+Note: caveman uses a split license. The portions TSK studied —
+src/hooks/ (caveman-activate.js, caveman-mode-tracker.js) and
+skills/ (SKILL.md) — are within the MIT-licensed adoption surface.
+The BSL-1.1-licensed engine directories were not studied or used.
+Drew from caveman (ideas, no code):
+- The three-layer injection architecture for output style
+  compression: one long SessionStart injection (~3,500 chars), short
+  per-turn reinforcement, and re-emission on compaction/resume.
+- The finding that short "be terse" injections are ignored by
+  models, and that rules with positive/negative examples and a
+  self-check directive are required (verified independently by
+  TSK's own spike experiments S3/S3+).
+- The auto-clarity concept: automatically dropping compressed style
+  for safety-critical or irreversible-action content.
+TSK's injection texts are original works authored for TSK.
+
+---------------------------------------------------------------------
+context-mode — Elastic License 2.0 (ELv2), source-available
+https://github.com/mksglu/context-mode
+---------------------------------------------------------------------
+context-mode is licensed under ELv2, NOT an OSI open-source license.
+TSK does not contain or redistribute any context-mode code; ELv2's
+restrictions (no hosted service offering, no license-notice removal)
+apply to context-mode's own code and do not restrict TSK, which is
+an independent implementation. TSK drew from studying its published
+source (ideas and adapted logic, no code copied):
+- The sandbox analysis paradigm ("think in code"): run analysis in a
+  sandboxed executor; only stdout conclusions enter the model's
+  context. TSK's sandbox is an independent Rust implementation.
+- The environment-variable denylist approach for sandbox hardening.
+  TSK compiled its own denylist from the same public injection-vector
+  classes (BASH_ENV, NODE_OPTIONS, LD_PRELOAD, PYTHONSTARTUP, ...).
+  [Adapted logic]
+- The 100KB large-output externalization threshold: tool results
+  above this size are replaced by a pointer + summary. [Adapted
+  logic]
+- The PreCompact resume-snapshot (<2KB) and post-compaction
+  auto-injection with a priority budget (role / decisions / skills /
+  intent, ~500 token cap). TSK adds a hard-truncation pass that the
+  original lacks (TSK experiment CS-4 found the original cap is
+  soft and overflows on adversarial input). [Adapted logic]
+- The "stdout write is the LAST action" hook discipline.
+- Negative findings verified by TSK's own experiments on a
+  re-created replica of the mechanism (CS-3): session-keyed
+  cross-hook marker accounting suffers parallel-collision and
+  misattribution bugs under concurrent tool calls. TSK's v1 avoids
+  the mechanism entirely (single-writer append-only ledger).
+
+---------------------------------------------------------------------
+context-compress — MIT
+---------------------------------------------------------------------
+Drew from context-compress (lessons learned, no code):
+- The BPE reverse-enlargement failure: BPE token compression can
+  increase byte count on some unicode texts (48,105 -> 48,222 bytes
+  observed in its benchmarks). TSK implements a tokenizer-count
+  gate: if compression grows the content, keep the original.
+
+---------------------------------------------------------------------
+headroom — Apache-2.0
+---------------------------------------------------------------------
+Drew from headroom (ideas, no code):
+- Context-window monitoring as a first-class feature.
+
+---------------------------------------------------------------------
+ctxpress — MIT (declared in README; no LICENSE file in repo at
+study time)
+---------------------------------------------------------------------
+Drew from ctxpress (ideas, no code):
+- Layered input compression and tiered cache thinking, used as
+  cross-comparison reference.
+
+---------------------------------------------------------------------
+toon — MIT
+---------------------------------------------------------------------
+Studied for compaction hook design; no specific logic adapted.
+
+---------------------------------------------------------------------
+glyphdown — PolyForm Noncommercial 1.0.0
+---------------------------------------------------------------------
+glyphdown is under a non-commercial license. TSK studied it for
+cross-comparison ONLY: it was evaluated and explicitly NOT adopted
+(requires fine-tuned models, incompatible with TSK's requirements).
+TSK contains no glyphdown logic or derived work. No TSK feature
+derives from it. Listed here for transparency about the survey.
+
+---------------------------------------------------------------------
+steno — no license declared (all rights reserved by default)
+---------------------------------------------------------------------
+steno's repository declares no license. Accordingly TSK borrowed
+nothing from it — no code, no logic, no design. It was surveyed for
+cross-comparison only, at the level of its public README
+description. Listed here for transparency about the survey.
+
+=====================================================================
+EXPERIMENT DATA
+=====================================================================
+All spike experiments referenced in TSK documentation (S1-S5, S3+,
+CS-1..CS-4) were designed and executed by the TSK project on
+Claude Code 2.1.117. Brief quoted remarks from the projects above
+(e.g. caveman's code comments on injection weakness) are short
+attributions used with source cited in the accompanying design
+documentation; TSK's re-created test replicas (e.g. the CS-3
+marker mechanism, the CS-4 budget assembler) are original TSK work.
