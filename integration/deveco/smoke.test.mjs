@@ -151,6 +151,41 @@ console.log("== rtk 式逐命令压缩（ls / git status / test）==")
   ok("test → failures 不超过 CAP_ERR+收尾", out.output.length < (raw.length - 20))
   ok("test → 无损落盘", out.output.includes(".tsk/kb/k"))
 }
+// —— 新增：grep / wc / find / du / df / ps（rtk 式，格式保持 + 无损） ——
+{
+  const raw = Array.from({ length: 70 }, (_, i) => `src/f${i}.ts:${12 + i}:export const v${i} = ${i};`).join("\n")
+  const out = { output: raw }
+  await hooks["tool.execute.after"]({ tool: "bash", sessionID: "s1", callID: "c11", args: { command: "rg -n 'export const' src" } }, out)
+  ok("grep → 按文件分组+行号", /grep \(\d+ files, \d+ matches\):/.test(out.output) && /src\/f0\.ts \(1\):/.test(out.output) && /12: export const v0/.test(out.output))
+  ok("grep → 无损落盘", out.output.includes(".tsk/kb/k"))
+}
+{
+  const raw = Array.from({ length: 90 }, (_, i) => `123 456 7890 common/dir/${String.fromCharCode(97 + (i % 10))}.ts`).join("\n")
+  const out = { output: raw }
+  await hooks["tool.execute.after"]({ tool: "bash", sessionID: "s1", callID: "c12", args: { command: "wc -l a/b/c/*.ts" } }, out)
+  ok("wc → 剥公共前缀", out.output.includes("90 项") && /公共前缀"common\/dir\/"已剥/.test(out.output) && !out.output.includes("common/dir/a.ts") && out.output.includes("a.ts"))
+  ok("wc → 无损落盘", out.output.includes(".tsk/kb/k"))
+}
+{
+  const raw = Array.from({ length: 140 }, (_, i) => `/repo/src/d${i % 4}/file${String(i).padStart(3, "0")}.ts`).join("\n")
+  const out = { output: raw }
+  await hooks["tool.execute.after"]({ tool: "bash", sessionID: "s1", callID: "c13", args: { command: "find . -name '*.ts'" } }, out)
+  ok("find → 计数+N项", /files:\n/.test(out.output) && out.output.includes("file000.ts") && out.output.includes("more paths"))
+  ok("find → 无损落盘", out.output.includes(".tsk/kb/k"))
+}
+{
+  const raw = `12K\t./node_modules\n${Array.from({ length: 80 }, (_, i) => `${i + 1}M\t./src/file${i}.ts`).join("\n")}\n500M\ttotal`
+  const out = { output: raw }
+  await hooks["tool.execute.after"]({ tool: "bash", sessionID: "s1", callID: "c14", args: { command: "du -sh *" } }, out)
+  ok("du → 保留项+total", /du \(\d+ 项\):/.test(out.output) && /total: 500M/.test(out.output))
+}
+{
+  const raw = `Filesystem     1K-blocks    Used Available Use% Mounted on\n${Array.from({ length: 45 }, (_, i) => `/dev/sda${i}  1048576 ${i * 10} ${999999 - i * 10} ${i}% /mnt/d${i}`).join("\n")}`
+  const out = { output: raw }
+  await hooks["tool.execute.after"]({ tool: "bash", sessionID: "s1", callID: "c15", args: { command: "df -h" } }, out)
+  ok("df → 表头+封顶", out.output.startsWith("[TSK") && out.output.includes("Filesystem") && out.output.includes("more"))
+  ok("ps → 表头+封顶", await (async () => { const o = { output: `PID USER COMMAND\n${Array.from({ length: 120 }, (_, i) => `${1000 + i} acetone cmd${i} --flag=${"z".repeat(40)} ${i}`).join("\n")}` }; await hooks["tool.execute.after"]({ tool: "bash", sessionID: "s1", callID: "c16", args: { command: "ps aux" } }, o); return o.output.includes("PID") && o.output.includes("more"); })())
+}
 
 fs.rmSync(base, { recursive: true, force: true })
 console.log(`\n结果: ${passed} 通过 / ${failed} 失败`)

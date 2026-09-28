@@ -37,6 +37,16 @@ const lsR = run(["ls", "-laR", "src"], proj, true)
 // —— 3. 真实 node --test（1 个真实失败用例） ——
 fs.writeFileSync(path.join(proj, "sum.test.js"), `const assert=require("node:assert/strict");\nfor(let i=0;i<60;i++){ require("node:test").test("case "+i,()=>assert.equal(i,i<30?i:999)); }\n`)
 const testOut = run(["node", "--test"], proj, true)
+// —— 2b. 更多真实命令输出（rtk 注册表里的常见大输出） ——
+run(["mkdir", "-p", "src/sub/deep", "src/a", "src/b"], proj)
+for (const d of ["src", "src/sub", "src/sub/deep", "src/a", "src/b"]) for (let i = 0; i < 60; i++) fs.writeFileSync(path.join(proj, d, `m${i}.ts`), `export const z${d.replace(/\W/g, "")}${i} = ${i};\n// ${"p".repeat(80)}\n`)
+const grepOut = run(["grep", "-rn", "export const", "src"], proj, true)
+const rgOut = run(["rg", "-n", "export const", "src"], proj, true)
+const findOut = run(["find", "src", "-name", "*.ts"], proj, true)
+const wcOut = run(["wc", "-l", "src/sub/deep/*.ts"], proj, true)
+const duOut = run(["du", "-sk", "src/*"], proj, true)
+const dfOut = run(["df", "-h", "."], proj, true)
+const psOut = (() => { try { return run(["ps", "aux"], os.tmpdir(), true) } catch { return "" } })()
 
 // —— 4. 加载插件（与部署的同一份源码）并驱动 tool.execute.after ——
 const src = fs.readFileSync(path.join(import.meta.dirname, "tsk.plugin.ts"), "utf8")
@@ -49,6 +59,13 @@ const runs = [
   ["git diff HEAD~5 HEAD", "bash", gitDiff],
   ["ls -laR src", "bash", lsR],
   ["node --test", "bash", testOut],
+  ["grep -rn export", "bash", grepOut],
+  ["rg -n export", "bash", rgOut],
+  ["find src -name '*.ts'", "bash", findOut],
+  ["wc -l src/sub/deep/*.ts", "bash", wcOut],
+  ["du -sk src/*", "bash", duOut],
+  ["df -h .", "bash", dfOut],
+  ["ps aux", "bash", psOut],
 ]
 
 const limit = (s) => (s.length > 90 ? s.slice(0, 90) + "…" : s)

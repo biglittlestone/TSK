@@ -166,8 +166,8 @@ export default {
       const is = (c: string) => new RegExp(`(^|[\s/:])${c}( ?|$)`, "i").test(cmd)
       const lines = ansiStrip(raw).split("\n").map((l) => l.replace(/[\r\n]+$/, "")).filter((l) => l.trim() !== "")
       const head = (a: string[], n = CAP_LIST) => { const h = a.slice(0, n); return h.join("\n") + (a.length > n ? `\n… +${a.length - n} more` : "") }
-      // ---- ls / tree / find：目录列出 → 计数 + 前 N 项（仍像目录列表） ----
-      if (is("ls") || /\b(tree|find)\b/.test(cmd)) {
+      // ---- ls / tree：目录列出 → 计数 + 前 N 项（仍像目录列表） ----
+      if (is("ls") || is("tree")) {
         // 长格式(-l)：取权限串后的文件名(最后一个 token)；单列(-1)：整行即文件名
         const names = lines
           .filter((l) => !/^total \d/.test(l) && l !== "." && l !== "..")
@@ -225,6 +225,73 @@ export default {
         if (hunks.length) parts.push(`${hunks.length} hunks:\n${hunks.slice(0, CAP_ERR).join("\n")}`)
         if (stat.length) parts.push(stat.join("\n"))
         if (parts.length) return parts.join("\n\n") + (raw.trim().endsWith(")") ? "" : "")
+      }
+      // ---- find：路径列表去重/封顶（rtk: cap + 文件类型） ----
+      if (is("find")) {
+        const paths = lines.filter((l) => !/Permission denied/.test(l) && !/^find:\s/.test(l))
+        const dirs = paths.filter((l) => /\/$/.test(l))
+        const files2 = paths.filter((l) => !/\/$/.test(l)).map((l) => l.trim().replace(/\/$/, ""))
+        return `${dirs.length} dirs, ${files2.length} files:\n${head(files2.slice(0, CAP_LIST), CAP_LIST)}${files2.length > CAP_LIST ? `\n… +${files2.length - CAP_LIST} more paths` : ""}`
+      }
+      // ---- grep / rg：按文件分组 + 每文件封顶（rtk: group by file, cap, tee） ----
+      if (is("grep") || is("rg")) {
+        const groups: Record<string, string[]> = {}
+        for (const l of lines) {
+          const m = /^([^:]+):(\d+):(.*)$/.exec(l)
+          const key = m ? m[1] : "(match)"
+          ;(groups[key] ??= []).push(m ? `${m[2]}: ${m[3]}` : l)
+        }
+        const keys = Object.keys(groups)
+        const parts: string[] = []
+        for (const f of keys.slice(0, CAP_LIST)) {
+          parts.push(`${f} (${groups[f].length}):\n` + groups[f].slice(0, 5).map((s) => "  " + s).join("\n") + (groups[f].length > 5 ? `\n  … +${groups[f].length - 5} rows` : ""))
+        }
+        if (keys.length > parts.length) parts.push(`… +${keys.length - parts.length} files`)
+        return `grep (${keys.length} files, ${lines.length} matches):\n` + parts.join("\n")
+      }
+      // ---- 公共前缀辅助：wc 多文件剥共享目录（rtk: find_common_prefix） ----
+      const commonPrefix = (arr: string[]) => {
+        if (!arr.length) return ""
+        let p = arr[0]
+        for (const s of arr) { while (!s.startsWith(p)) p = p.slice(0, -1) }
+        return p
+      }
+      // ---- wc：多文件剥公共路径前缀（如 a/b/c.txt a/b/d.txt → c.txt | d.txt），合计保留 ----
+      if (is("wc")) {
+        const rows = lines.map((l) => l.trim().split(/\s+/)).filter((r) => r.length >= 2)
+        if (rows.length) {
+          const total = rows.find((r) => r[r.length - 1] === "total")
+          const filesR = rows.filter((r) => r[r.length - 1] !== "total")
+          const paths = filesR.map((r) => r[r.length - 1])
+          const prefix = paths.length > 1 ? commonPrefix(paths) : ""
+          const shown = filesR.map((r) => `${r.slice(0, -1).join(" ")} ${r[r.length - 1].slice(prefix.length)}`).slice(0, CAP_LIST)
+          return `wc (${filesR.length} 项，公共前缀"${prefix || (paths.length > 1 ? "(各行不同)" : "(单行)")}"已剥):\n` + shown.join("\n") + (total ? `\n${total.join(" ")}` : "") + (filesR.length > CAP_LIST ? `\n… +${filesR.length - CAP_LIST} more` : "")
+        }
+        return raw.trim().slice(0, FINAL_RESULT_KEEP)
+      }
+      // ---- du：保留各行 + total（若有多项则封顶） ----
+      if (is("du")) {
+        const total = lines.find((l) => /\ttotal$/i.test(l))
+        const rows = lines.filter((l) => !/\ttotal$/i.test(l))
+        return `du (${rows.length} 项):\n${head(rows, CAP_LIST)}${total ? `\ntotal: ${total.trim()}` : ""}`
+      }
+      // ---- df：表头 + 每挂载一行 + 封顶 ----
+      if (is("df")) {
+        const header = lines[0]
+        const rows = lines.slice(1)
+        return `df:\n${header}\n${head(rows, CAP_LIST)}${rows.length > CAP_LIST ? `\n… +${rows.length - CAP_LIST} more` : ""}`
+      }
+      // ---- ps：表头 + 关键列 + 封顶 ----
+      if (is("ps")) {
+        const hi = lines.findIndex((l) => /^\s*(PID|UID|USER)\s/.test(l))
+        const header = hi >= 0 ? lines[hi] : lines[0]
+        const rows = (hi >= 0 ? lines.slice(hi + 1) : lines.slice(1))
+        return `ps:\n${header}\n${head(rows, CAP_LIST)}${rows.length > CAP_LIST ? `\n… +${rows.length - CAP_LIST} more` : ""}`
+      }
+      // ---- curl / wget：保留结尾状态/速率/错误 关键行 ----
+      if (is("curl") || is("wget")) {
+        const fin = lines.filter((l) => /HTTP\/|error|failed|cannot|resolve|(\d{2,})\s*K?B.*(s|%|done)|100%|Saved to|(unknown|total) size/i.test(l)).slice(-8)
+        return (fin.length ? fin.join("\n") : raw.trim().slice(-FINAL_RESULT_KEEP))
       }
       // ---- 测试/构建/lint：报告状 —— 通过率 + 前 N 条失败，像测试报告 ----
       if (/(vitest|jest|mocha|phpunit|pytest|ctest|golangci)/.test(cmd) || (/test/.test(cmd) && /(pass|fail|✓|✗|✖|Tests:|Suites:)|failed/i.test(raw))) {
