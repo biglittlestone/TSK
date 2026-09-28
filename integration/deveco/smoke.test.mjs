@@ -200,6 +200,16 @@ console.log("== rtk 式逐命令压缩（ls / git status / test）==")
   await hooks["tool.execute.after"]({ tool: "bash", sessionID: "s1", callID: "c22", args: { command: "cat someBig.log" } }, out)
   ok("读普通大文件仍压缩(不受影响)", out.output.includes("[TSK 沙箱") && out.output.length < 3200)
 }
+// —— B(context-mode 式)：大输出分节 + 章节地图 + 每节一文件可检索 ——
+{
+  const secs = Array.from({ length: 6 }, (_, i) => `## section-${i}\nline ${i} data ${"p".repeat(900)}`).join("\n\n")
+  const raw = `build start\n\n${secs}\n\nbuild end 0 errors`
+  const out = { output: raw }
+  await hooks["tool.execute.after"]({ tool: "bash", sessionID: "s1", callID: "c23", args: { command: "npm build 2>&1 | tee report.log" } }, out)
+  ok("B→章节地图出现", out.output.includes("§ 章节(") && out.output.includes("## section-0") && out.output.includes("## section-1"))
+  const secFiles = (fs.existsSync(path.join(proj, ".tsk", "kb")) ? fs.readdirSync(path.join(proj, ".tsk", "kb")) : []).filter((f) => /s\d+\.txt$/.test(f))
+  ok("B→每节一文件落盘", secFiles.length >= 6)
+}
 
 fs.rmSync(base, { recursive: true, force: true })
 console.log(`\n结果: ${passed} 通过 / ${failed} 失败`)

@@ -124,8 +124,8 @@ pub fn search(query: &str, top: usize, session_filter: Option<&str>) -> Vec<Sear
             score += (c as f64) * idf;
         }
         if score > 0.0 {
-            // 找首个命中行的 snippet
-            let snippet = snippet_around_hit(&f.text, &qset, SNIPPET_LINES);
+            // 找首个命中行的 snippet（含命中词高亮）
+            let snippet = highlight_hits(&snippet_around_hit(&f.text, &qset, SNIPPET_LINES), &qset);
             hits.push(SearchHit { path: f.path.clone(), score: (score * 100.0) as u32, bytes: f.bytes, snippet });
         }
     }
@@ -164,6 +164,45 @@ fn snippet_around_hit(text: &str, qset: &HashSet<String>, pad: usize) -> String 
     }
 }
 
+/// 在 snippet 里给查询词加高亮 ≪term≫（大小写不敏感、按 char 安全推进，避免切到多字节字符）。
+fn highlight_hits(snippet: &str, qset: &HashSet<String>) -> String {
+    let low = snippet.to_lowercase();
+    let chars: Vec<char> = snippet.chars().collect();
+    let lowchars: Vec<char> = low.chars().collect();
+    let mut out = String::new();
+    let mut i = 0usize; // char 下标
+    while i < chars.len() {
+        let rest: String = lowchars[i..].iter().collect();
+        let mut best: Option<usize> = None; // 命中起始的 char 偏移
+        for q in qset {
+            if let Some(buf) = rest.find(q.as_str()) {
+                let char_off = rest[..buf].chars().count();
+                if best.map_or(true, |cur| char_off < cur) {
+                    best = Some(char_off);
+                }
+            }
+        }
+        match best {
+            Some(0) => {
+                let q = qset
+                    .iter()
+                    .find(|q| rest.starts_with(q.as_str()))
+                    .expect("best=0 implies a startswith match");
+                let n = q.chars().count();
+                out.push('≪');
+                out.extend(chars[i..i + n].iter());
+                out.push('≫');
+                i += n;
+            }
+            Some(_) | None => {
+                out.push(chars[i]);
+                i += 1;
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod t {
     use super::*;
@@ -180,5 +219,16 @@ mod t {
         let s = snippet_around_hit(text, &q, 1);
         assert!(s.contains("ERROR 404 at foo"), "snippet must keep exact hit, got: {s}");
         assert!(s.contains("line b") && s.contains("line d"), "snippet should include neighbors");
+    }
+
+    #[test]
+    fn highlight_marks_query_term() {
+        let qset: HashSet<String> = ["error"].iter().map(|s| s.to_string()).collect();
+        let out = highlight_hits("some ERROR 404 here\ntail line", &qset);
+        assert!(out.contains("≪ERROR≫"), "must wrap the matched term, got: {out}");
+        assert!(!out.contains("≪error≫"), "must keep original case inside wrapper, got: {out}");
+        // 多字节字符不致 panic（snippet 前的非 ASCII）
+        let cn = highlight_hits("中文中文 error x", &qset);
+        assert!(cn.contains("≪error≫"), "must still wrap ascii term after cjk, got: {cn}");
     }
 }

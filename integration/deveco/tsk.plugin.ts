@@ -323,6 +323,44 @@ export default {
         return id
       } catch { return undefined }
     }
+    // —— B(context-mode 式)：大输出按空行切 section，每节 {title,content} 独立落盘+索引，
+    //    使 tsk search(BM25)能精取单节；模型只看「章节地图」即可定向取回 ——
+    const MAX_SECTIONS = 64
+    const sectionize = (raw: string): { title: string; content: string }[] => {
+      const blank = raw.split(/\n\s*\n/)
+      const usable = blank.map((s) => s.trim()).filter((s) => s.length > 0)
+      if (usable.length >= 2 && usable.length <= MAX_SECTIONS) {
+        return usable.map((s, i) => ({ title: (s.split("\n")[0] || `Section ${i + 1}`).slice(0, 40), content: s }))
+      }
+      // 无空行结构 → 定长行组（前 60 行一组，余下封顶）
+      const L = ansiStrip(raw).split("\n").map((l) => l.trim()).filter((l) => l)
+      const chunks: { title: string; content: string }[] = []
+      const per = 60
+      for (let i = 0; i < L.length && chunks.length < MAX_SECTIONS; i += per) {
+        const slice = L.slice(i, i + per)
+        const a = i + 1, b = i + slice.length
+        chunks.push({ title: `Lines ${a}-${b}`, content: slice.join("\n") })
+      }
+      return chunks
+    }
+    const indexSections = async (baseId: string, sections: { title: string; content: string }[], command: string): Promise<string[]> => {
+      try {
+        const x = await kbfs(cwd); if (!x) return []
+        const mdPath = `${x.d}/index.json5`
+        let idx: any = { frags: {}, inv: {} }
+        try { idx = JSON.parse(x.f.readFileSync(mdPath, "utf8")) } catch {}
+        const ids: string[] = []
+        sections.forEach((se, i) => {
+          const sid = `${baseId}s${i}`
+          ids.push(sid)
+          x.f.writeFileSync(`${x.d}/${sid}.txt`, se.content, "utf8")
+          idx.frags[sid] = { id: sid, title: se.title, preview: ansiStrip(se.content).replace(/\s+/g, " ").slice(0, KB_TITLE_PREVIEW), path: `${x.d}/${sid}.txt`, len: se.content.length, cmd: (command || "").slice(0, 120), ts: Date.now() }
+          for (const w of new Set(tokenize(se.title + " " + ansiStrip(se.content).slice(0, 800)))) { (idx.inv[w] = idx.inv[w] || []); if (!idx.inv[w].includes(sid)) idx.inv[w].push(sid) }
+        })
+        x.f.writeFileSync(mdPath, JSON.stringify(idx), "utf8")
+        return ids
+      } catch { return [] }
+    }
     const kbsearch = async (q: string, top = 3) => {
       try {
         const x = await kbfs(cwd); if (!x) return []
@@ -361,6 +399,7 @@ export default {
         const cmd = typeof ia === "string" ? String(ia)
           : String(ia?.command ?? ia?.cmd ?? input?.input?.command ?? input?.input?.cmd ?? "")
         const src = typeof output?.output === "string" ? output.output : ""
+        let lastSections: string = ""
         if (!SANDBOX_TOOLS.has(tool)) return
         // 避免套娃：读 TSK 自身 KB 原文(.tsk/kb/k*.txt / index.json5) → 直通真原文，绝不二次压缩。
         // 回读原文统一走 tsk search(BM25)；cat KB 文件是透明逃逸，不应被再压一次、导致取不回全文。
@@ -402,20 +441,34 @@ export default {
             await journal({ kind: "kb-save", sessionID: input.sessionID, callID: input.callID, tool, cmd: cmd.slice(0, 160), rawBytes: raw.length, kbFile: `${kbd(cwd)}/${id}.txt`, kbIndex: `${kbd(cwd)}/index.json5` })
           }
         }
+        // —— B(context-mode 式)：大输出分节落盘 + 章节地图 ——
+        let sectionMap = ""
+        if (wantKB && raw.length > KB_INTENT_THRESHOLD) {
+          const secs = sectionize(raw)
+          const secIds = await indexSections(kbid(raw), secs, cmd)
+          if (secIds.length > 1) {
+            const titles = secs.map((s) => s.title)
+            const shown = titles.slice(0, 12)
+            sectionMap = `\n§ 章节(${titles.length})：${shown.join(" | ")}${titles.length > 12 ? ` | …+${titles.length - 12}` : ""}\n§ 取某节：tsk search "<章节标题关键词>" 精确取回。`
+          }
+        }
 
         output.output =
           `[TSK 沙箱：该操作 {${tool}} 已在沙箱执行完成，原文 ${raw.length} 字符(≈${Math.ceil(raw.length / 4)} tok)。` +
           `中间过程未进入上下文，仅保留最终结果。\n` +
           (kbPointer
-            ? `原始数据已落盘知识库(无损可回取)：${kbPointer}\n需要精确原文时用 tsk search "关键词" 按需取回片段；cat/read 该文件可得完整原文（直通，不再压缩）。\n`
+            ? `原始数据已落盘知识库(无损可回取)：${kbPointer}\n精确原文用 tsk search "关键词" 按需取回片段；cat/read 可得完整原文（直通）。\n`
             : `需要完整输出请再运行原命令查看。\n`) +
-          `${final.text}`
+          `${final.text}${sectionMap}`
+        // 章节数计入记账，便于报告核对分节收益
+        lastSections = sectionMap ? (sectionMap.match(/§ 章节\((\d+)\)/)?.[1] ?? "") : ""
         await journal({
           kind: "sandbox-output", sessionID: input.sessionID, callID: input.callID, tool,
           command: cmd && cmd.length > 240 ? cmd.slice(0, 240) + "…" : cmd,
           original_chars: raw.length, original_tokens: Math.ceil(raw.length / 4),
           kept_chars: final.kept, saved_chars: raw.length - final.kept,
           saved_tokens: Math.ceil(raw.length / 4) - Math.ceil(final.kept / 4),
+          sections: lastSections,
         })
       },
 

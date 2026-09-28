@@ -1551,7 +1551,7 @@ fn smoke_search_returns_exact_snippet() {
     let out = run(&home, &["search", "error"], "", &project);
     assert_eq!(out.status.code(), Some(0), "search should exit 0; stderr={}", String::from_utf8_lossy(&out.stderr));
     let s = String::from_utf8_lossy(&out.stdout);
-    assert!(s.contains("ERROR 404 file not found"), "snippet must keep exact hit line, got: {s}");
+    assert!(s.contains("≪ERROR≫ 404 file not found"), "snippet must keep exact hit line + highlight, got: {s}");
     assert!(s.contains("calc"), "should include neighbors, got: {s}");
 }
 
