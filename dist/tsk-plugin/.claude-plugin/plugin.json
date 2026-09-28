@@ -56,5 +56,13 @@
         ]
       }
     ]
+  },
+  "mcpServers": {
+    "tsk": {
+      "command": "node",
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/bin/tsk-mcp.mjs"
+      ]
+    }
   }
 }
