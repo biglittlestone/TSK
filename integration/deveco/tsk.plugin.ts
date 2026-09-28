@@ -362,6 +362,9 @@ export default {
           : String(ia?.command ?? ia?.cmd ?? input?.input?.command ?? input?.input?.cmd ?? "")
         const src = typeof output?.output === "string" ? output.output : ""
         if (!SANDBOX_TOOLS.has(tool)) return
+        // 避免套娃：读 TSK 自身 KB 原文(.tsk/kb/k*.txt / index.json5) → 直通真原文，绝不二次压缩。
+        // 回读原文统一走 tsk search(BM25)；cat KB 文件是透明逃逸，不应被再压一次、导致取不回全文。
+        if (/\.tsk[\\/]kb[\\/]/.test(cmd)) return
         // size gate：小输出(≤1600字符)直接放行不动，避免每个 bash 都被包一层「沙箱」噪声
         if (src.length <= FINAL_RESULT_KEEP * 2) return
 
@@ -404,7 +407,7 @@ export default {
           `[TSK 沙箱：该操作 {${tool}} 已在沙箱执行完成，原文 ${raw.length} 字符(≈${Math.ceil(raw.length / 4)} tok)。` +
           `中间过程未进入上下文，仅保留最终结果。\n` +
           (kbPointer
-            ? `原始数据已落盘知识库(无损可回取)：${kbPointer}\n如需完整输出请 read/cat 该文件，或 tsk search "关键词" 精确取回相关片段。\n`
+            ? `原始数据已落盘知识库(无损可回取)：${kbPointer}\n需要精确原文时用 tsk search "关键词" 按需取回片段；cat/read 该文件可得完整原文（直通，不再压缩）。\n`
             : `需要完整输出请再运行原命令查看。\n`) +
           `${final.text}`
         await journal({

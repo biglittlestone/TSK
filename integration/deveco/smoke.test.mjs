@@ -186,6 +186,20 @@ console.log("== rtk 式逐命令压缩（ls / git status / test）==")
   ok("df → 表头+封顶", out.output.startsWith("[TSK") && out.output.includes("Filesystem") && out.output.includes("more"))
   ok("ps → 表头+封顶", await (async () => { const o = { output: `PID USER COMMAND\n${Array.from({ length: 120 }, (_, i) => `${1000 + i} acetone cmd${i} --flag=${"z".repeat(40)} ${i}`).join("\n")}` }; await hooks["tool.execute.after"]({ tool: "bash", sessionID: "s1", callID: "c16", args: { command: "ps aux" } }, o); return o.output.includes("PID") && o.output.includes("more"); })())
 }
+// —— 避免套娃：读 TSK 自身 KB 原文(.tsk/kb/k*.txt) → 直通真原文，不二次压缩 ——
+{
+  const big = "z".repeat(3200)
+  fs.mkdirSync(path.join(proj, ".tsk", "kb"), { recursive: true })
+  const out = { output: big }
+  await hooks["tool.execute.after"]({ tool: "bash", sessionID: "s1", callID: "c21", args: { command: `cat ${proj.replace(/\\/g, "/")}/.tsk/kb/kabc.txt` } }, out)
+  ok("读自身 KB 原文直通(不套娃)", out.output === big)
+}
+{
+  // 对照：cat 普通大文件仍被压缩
+  const out = { output: "y".repeat(3200) }
+  await hooks["tool.execute.after"]({ tool: "bash", sessionID: "s1", callID: "c22", args: { command: "cat someBig.log" } }, out)
+  ok("读普通大文件仍压缩(不受影响)", out.output.includes("[TSK 沙箱") && out.output.length < 3200)
+}
 
 fs.rmSync(base, { recursive: true, force: true })
 console.log(`\n结果: ${passed} 通过 / ${failed} 失败`)
