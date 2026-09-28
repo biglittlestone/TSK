@@ -261,7 +261,34 @@ fn report_all() -> String {
     for (k, v) in &tools {
         s.push_str(&format!("  {k}: {v}\n"));
     }
+    // deveco 输出压缩 saved：读 <cwd>/.tsk/injections.jsonl 的 sandbox-output 条目（rtk 式逐命令压缩）
+    let (dc_tok, dc_n) = deveco_output_saved();
+    if dc_n > 0 {
+        s.push_str(&format!(
+            "\ndeveco 输出压缩(deveco 插件 tool.execute.after): saved ≈ {dc_tok} tok / {dc_n} 次大输出\n"
+        ));
+    }
     s
+}
+
+/// 从 <cwd>/.tsk/injections.jsonl 汇总 deveco 输出压缩的 saved_tokens 与压缩次数。
+fn deveco_output_saved() -> (usize, usize) {
+    let path = std::env::current_dir().ok().map(|d| d.join(".tsk/injections.jsonl"));
+    let Some(path) = path.filter(|p| p.is_file()) else { return (0, 0) };
+    let Ok(content) = std::fs::read_to_string(&path) else { return (0, 0) };
+    let mut tok = 0usize;
+    let mut n = 0usize;
+    for line in content.lines() {
+        let Ok(v): Result<serde_json::Value, _> = serde_json::from_str(line) else { continue };
+        if v.get("kind").and_then(|k| k.as_str()) != Some("sandbox-output") {
+            continue
+        }
+        if let Some(t) = v.get("saved_tokens").and_then(|t| t.as_u64()) {
+            tok += t as usize;
+            n += 1;
+        }
+    }
+    (tok, n)
 }
 
 /// `report --clean`: remove every ledger + the current-session marker (reset stats).
@@ -424,8 +451,6 @@ fn add_tsk_hooks(obj: &mut Value) {
     let ho = o.entry("hooks").or_insert(Value::Object(Map::new()));
     let Some(ho) = ho.as_object_mut() else { return };
     let tsk = serde_json::json!({
-        "PreToolUse": [{ "matcher": "Read", "hooks": [{ "type": "command", "command": "tsk hook PreToolUse" }] }],
-        "PostToolUse": [{ "matcher": "Read", "hooks": [{ "type": "command", "command": "tsk hook PostToolUse" }] }],
         "SessionStart": [{ "hooks": [{ "type": "command", "command": "tsk hook SessionStart" }] }],
         "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "tsk hook UserPromptSubmit" }] }],
         "PreCompact": [{ "hooks": [{ "type": "command", "command": "tsk hook PreCompact" }] }],

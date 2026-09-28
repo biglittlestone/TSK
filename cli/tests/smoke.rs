@@ -151,7 +151,7 @@ fn m0_wiring_skeleton_escape_failopen() {
     let out = run(&home, &["init"], "", &project);
     assert_eq!(out.status.code(), Some(0));
     let settings = std::fs::read_to_string(project.join(".claude/settings.json")).unwrap();
-    for ev in ["PreToolUse", "PostToolUse", "SessionStart", "UserPromptSubmit", "PreCompact"] {
+    for ev in ["SessionStart", "UserPromptSubmit", "PreCompact"] {
         assert!(settings.contains(&format!("tsk hook {ev}")), "wiring {ev}");
     }
     assert_eq!(read_cfg(&home, "enabled").as_deref(), Some("true"));
@@ -507,7 +507,7 @@ fn reliability() {
     run(&home, &["init"], "", &project);
     run(&home, &["init"], "", &project);
     let settings = std::fs::read_to_string(project.join(".claude/settings.json")).unwrap();
-    for ev in ["PreToolUse", "SessionStart", "PreCompact"] {
+    for ev in ["SessionStart", "PreCompact"] {
         let needle = format!("tsk hook {ev}");
         assert_eq!(settings.matches(&needle).count(), 1, "{needle} 必须只出现一次:\n{settings}");
     }
@@ -518,7 +518,7 @@ fn reliability() {
     assert!(!settings.contains("tsk hook"), "off 后 hooks 摘除");
     run(&home, &["init"], "", &project);
     let settings = std::fs::read_to_string(project.join(".claude/settings.json")).unwrap();
-    for ev in ["PreToolUse", "SessionStart", "PreCompact"] {
+    for ev in ["SessionStart", "PreCompact"] {
         let needle = format!("tsk hook {ev}");
         assert_eq!(settings.matches(&needle).count(), 1, "off→init 后 {needle} 恢复且不重复");
     }

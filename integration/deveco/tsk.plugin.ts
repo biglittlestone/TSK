@@ -472,38 +472,6 @@ export default {
         })
       },
 
-      "experimental.chat.messages.transform": async (input: any, output: any) => {
-        // 诊断：dump 一条含 tool 的消息的 parts 结构（找对 L2 剪裁点）
-        const dm = (output?.messages || []).find((m: any) => (m.parts || []).length > 1)
-        // L2 上下文压缩：发给模型的 messages 可改写。保留最近 KEEP_RECENT 轮完整；
-        // 更早的轮只留 text/reasoning（决策），删掉 verbose 工具结果 → 每轮重发的历史被压平。
-        const KEEP_RECENT = 10
-        const msgs = (output?.messages || []) as any[]
-        if (true) return
-        const keep = msgs.slice(-KEEP_RECENT)
-        const old = msgs.slice(0, msgs.length - KEEP_RECENT)
-        const oldCondensed: any[] = []
-        let droppedChars = 0, droppedParts = 0
-        for (const m of old) {
-          const parts = (m.parts || []).filter((p: any) => p.type === "text" || p.type === "reasoning")
-          const dropped = (m.parts || []).length - parts.length
-          if (dropped > 0) {
-            for (const p of (m.parts || [])) {
-              if (p.type === "tool" && p.state?.output != null) droppedChars += String(p.state.output).length
-            }
-            droppedParts += dropped
-          }
-          if (parts.length) oldCondensed.push({ info: m.info, parts })
-        }
-        const notice = { info: { role: "user" }, parts: [{ type: "text", text: "[TSK 压缩: 较早轮次的工具输出已省略以控制上下文。若需某文件/日志原文，请按之前给出的 .tsk/kb 指针 read/cat 或 tsk search 取回。" }] }
-        output.messages = [...oldCondensed, notice, ...keep]
-        if (droppedChars > 0) await journal({
-          kind: "l2-history-compress", sessionID: input?.sessionID ?? "",
-          dropped_chars: droppedChars, dropped_parts: droppedParts,
-          saved_tokens: Math.ceil(droppedChars / 4),
-          msgs: msgs.length, kept: keep.length,
-        })
-      },
 
       "event": async ({ event }: any) => {
         const t = event?.type
