@@ -122,6 +122,26 @@ console.log("== rtk 式逐命令压缩（ls / git status / test）==")
   ok("git status → 无损落盘", out.output.includes(".tsk/kb/k"))
 }
 {
+  // git log → 保留每 commit hash+subject（oneline 语义）
+  const raw = Array.from({ length: 40 }, (_, i) => `commit ${"deadbeef" + String(i).padStart(8, "0")}\nAuthor: u\nDate:  2026-09-2${i % 9}\n\n    fix: patch ${i} thing\n\n    some long body line that should be dropped ${"x".repeat(30)}`).join("\n\n")
+  const out = { output: raw }
+  await hooks["tool.execute.after"]({ tool: "bash", sessionID: "s1", callID: "c9", args: { command: "git log --stat" } }, out)
+  ok("git log → 每commit一行 hash+subject（oneline 语义）", /40 commits:/.test(out.output) && /deadbeef0000.*fix: patch 0/.test(out.output))
+  ok("git log → 丢正文 long body", !out.output.includes("long body line that should be dropped"))
+  ok("git log → 无损落盘", out.output.includes(".tsk/kb/k"))
+}
+{
+  // git diff → 保留 per-file + hunk 头 + 变更统计，丢 +/-正文
+  const body = Array.from({ length: 300 }, (_, i) => ` ${"a".repeat(40)}`).join("\n")
+  const raw = `diff --git a/src/a.ts b/src/a.ts\nnew file mode 100644\n@@ -0,0 +1,200 @@\n${body}\ndiff --git a/src/b.ts b/src/b.ts\n@@ -10,5 +10,4 @@\n 1 file changed, 205 insertions(+), 5 deletions(-)`
+  const out = { output: raw }
+  await hooks["tool.execute.after"]({ tool: "bash", sessionID: "s1", callID: "c10", args: { command: "git diff HEAD" } }, out)
+  ok("git diff → 保留 per-file 名", /2 files:/.test(out.output) && /src\/a.ts/.test(out.output))
+  ok("git diff → 保留 hunk 头", /@@ -0,0 \+1,200 @@/.test(out.output))
+  ok("git diff → 丢 +/- 正文", !out.output.includes("a".repeat(40)))
+  ok("git diff → 无损落盘", out.output.includes(".tsk/kb/k"))
+}
+{
   // vitest → 报告状：Tests 汇总 + 前 N 条失败
   const fails = Array.from({ length: 40 }, (_, i) => `✗ tests/foo${i}.test.ts > case ${i}\n  AssertionError: expected ${i} to equal ${9 - i}`).join("\n")
   const raw = ` RUN  v2\n ${JSON.stringify({ numTotalTests: 40, numPassedTests: 0, numFailedTests: 40 })}\n\n${fails}\n Test Files  1 failed (1)\n Tests  0 passed | 40 failed (40)`

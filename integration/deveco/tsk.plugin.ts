@@ -188,6 +188,44 @@ export default {
         if (!keys.length) return raw.trim().slice(0, FINAL_RESULT_KEEP) // 干净 or 长格式 → 保尾
         return `git status (${lines.length - 1} 行)：\n` + keys.map((st) => `${st} (${groups[st].length}):\n${head(groups[st])}`).join("\n")
       }
+      // ---- git log / show：保留每个 commit 的 hash+subject（oneline 语义），丢正文/stat 大段 ----
+      if (is("git") && /\b(log|show)\b/.test(cmd)) {
+        const commits: string[] = []
+        for (let i = 0; i < lines.length; i++) {
+          const m = /^commit ([0-9a-f]{7,40})/i.exec(lines[i])
+          if (!m) continue
+          let subject = ""
+          for (let j = i + 1; j < lines.length && j <= i + 12; j++) {
+            const t = lines[j].trim()
+            if (!t) continue
+            if (/^(Author|Date|Merge|Signed-off|Co-authored|commit )/i.test(t)) continue
+            if (/^    /.test(lines[j])) { subject = t; break } // 正文缩进行 = subject
+            subject = t; break
+          }
+          commits.push(`${m[1].slice(0, 12)} ${subject}`)
+        }
+        if (commits.length) {
+          const headC = commits.slice(0, CAP_LIST)
+          return `${commits.length} commits:\n${headC.join("\n")}${commits.length > CAP_LIST ? `\n… +${commits.length - CAP_LIST} more` : ""}`
+        }
+      }
+      // ---- git diff / show：保留 per-file 行 + hunk 头 + 变更统计，丢 +/-正文 ----
+      if (is("git") && /\b(diff|show)\b/.test(cmd)) {
+        const files: string[] = []
+        const hunks: string[] = []
+        for (const l of lines) {
+          const f = /^diff --git a\/(\S+)(?: b\/(\S+))?$/.exec(l)
+          if (f) files.push(f[2] && f[2] !== f[1] ? `${f[1]} → ${f[2]}` : f[1])
+          const h = /^@@ -(\d+(?:,\d+)?) \+(\d+(?:,\d+)?) @@(.*)$/.exec(l)
+          if (h) hunks.push(`@@ -${h[1]} +${h[2]} @@${h[3] ? " " + h[3].trim() : ""}`)
+        }
+        const stat = lines.filter((l) => /\bfiles? changed\b|(\d+) insertion|(\d+) deletion/i.test(l)).slice(0, 3)
+        const parts: string[] = []
+        if (files.length) parts.push(`${files.length} files:\n${head(files, CAP_LIST)}`)
+        if (hunks.length) parts.push(`${hunks.length} hunks:\n${hunks.slice(0, CAP_ERR).join("\n")}`)
+        if (stat.length) parts.push(stat.join("\n"))
+        if (parts.length) return parts.join("\n\n") + (raw.trim().endsWith(")") ? "" : "")
+      }
       // ---- 测试/构建/lint：报告状 —— 通过率 + 前 N 条失败，像测试报告 ----
       if (/(vitest|jest|mocha|phpunit|pytest|ctest|golangci)/.test(cmd) || (/test/.test(cmd) && /(pass|fail|✓|✗|✖|Tests:|Suites:)|failed/i.test(raw))) {
         const summary = lines.filter((l) => /(Tests:|test suites|passed|failed|✓ \d|✗ \d|Tests:|Suites:|passed\s+\d|failed\s+\d)/i.test(l)).slice(0, 4)
