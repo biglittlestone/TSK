@@ -3,6 +3,7 @@
 //! Pure library. No CLI concerns here (no clap, no stdout/stderr).
 //! Errors propagate as `Result`; the CLI `main` is the single catch point.
 
+pub mod compact;
 pub mod config;
 pub mod events;
 pub mod inject;

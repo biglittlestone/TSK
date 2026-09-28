@@ -57,6 +57,12 @@ enum Cmd {
         #[arg(trailing_var_arg = true)]
         args: Vec<String>,
     },
+    /// 按命令类型压缩一个工具输出（rtk 式）。raw 走 stdin，输出紧凑文本；未识别则空。
+    Compress {
+        /// 原始命令（用于决定压缩策略），如 "git status --short"
+        #[arg(trailing_var_arg = true)]
+        command: Vec<String>,
+    },
     /// Search TSK's stored/externalized content (Think-in-Code 辅助). Returns exact-hit snippets.
     Search {
         /// Query terms (joined by space).
@@ -120,6 +126,11 @@ fn run() -> Result<String, String> {
         Cmd::Exec { script, input, session, args } => Ok(exec(&script, &input, &session, &args)?),
         Cmd::Search { query, session, top } => Ok(search_cmd(&query.join(" "), session.as_deref(), top)),
         Cmd::Analyze { file, script, session } => Ok(analyze_cmd(&file, script.as_deref(), &session)?),
+        Cmd::Compress { command } => {
+            let cmd = command.join(" ");
+            let raw = std::io::read_to_string(std::io::stdin()).unwrap_or_default();
+            Ok(tsk_core::compact::compact_by_command(&cmd, &raw).unwrap_or_default())
+        }
     }
 }
 

@@ -114,6 +114,17 @@ export default {
     }
 
     // ———— 输出压缩管线 ————
+    // tskCompress 委托 Rust 核心（共享收益引擎），替代插件内联 compactByCommand。
+    const tskCompress = async (cmd: string, raw: string): Promise<string | null> => {
+      try {
+        const proc = Bun.spawn(["tsk", "compress", cmd], { stdin: "pipe", stdout: "pipe", stderr: "pipe" })
+        proc.stdin.write(raw); proc.stdin.end()
+        const timeout = new Promise((_, rej) => { const t = setTimeout(() => { try { proc.kill() } catch {}; rej(new Error("compress-timeout-8s")) }, 8000) })
+        const buf: Uint8Array = await Promise.race([new Response(proc.stdout).arrayBuffer(), timeout])
+        const out = new TextDecoder().decode(buf).trim()
+        return out && out !== "{}" ? out : null   // CLI 无命中打印 `{}`（hook passthrough 约定）→ 视为未匹配
+      } catch { return null }
+    }
     const ANSI = /\u001b\[[0-9;]*[A-Za-z]|[\u001b][()][0-9;]*[A-Za-z]|\[2K|\r/g
     const ansiStrip = (s: string) => s.replace(ANSI, "")
     const dropProgress = (s: string) =>
@@ -409,7 +420,7 @@ export default {
 
         // rtk 式逐命令语义压缩：命中 → 用紧凑但符合工具格式的文本；未命中 → 通用管线。
         // 无损保证：只要做了紧凑，就一定把原文落盘 KB，模型可 read/cat 或 tsk search 取回完整内容。
-        const compact = compactByCommand(cmd, src)
+        const compact = (await tskCompress(cmd, src)) ?? (compactByCommand(cmd, src) || null)
         let raw = src
         let final: { text: string; kept: number }
         if (compact !== null) {

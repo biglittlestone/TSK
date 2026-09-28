@@ -33,9 +33,11 @@
 - read 骨架 hook(PreToolUse/PostToolUse)+ 16+3 测试 + 8 helper；deveco L2 死分支
 
 ## 待办重构（建议，需单独立项）
-1. **`tsk compress`（核心迁移，最大架构项）**：把 deveco `compactByCommand`(~200 行 TS)迁进 Rust core，deveco 改 spawn 调它（像它已 spawn tsk hook/tsk search）。收益引擎进共享核心，插件变薄桥。风险高(迁移+桥接)，需单独立项与回归。
 2. **config `output_compression`**：#2 保留，若最终弃用文风可整体移除该装置。
 3. Claude MCP tools 与 `tsk search/analyze/exec` 语义对齐(高亮已入 search)。
+
+## 已完成（本轮）
+1. **`tsk compress`（已落地，核心迁移）**：`core/src/compact.rs` = 逐命令输出压缩引擎（ls/tree/find/git status/log/diff/grep/rg/wc/du/df/ps/curl/wget/测试构建），5 个 Rust 单测；CLI `tsk compress`（stdin raw + argv cmd）。deveco 插件 tool.execute.after 改 spawn `tsk compress`（薄桥，`{}`=未命中回退内联）。收益实测 80-96%（git log 80% / diff 96% / ls 94% / node-test 96% / grep 90% / find 89%）。Rust 测试 7+18+15 全绿 + smoke 39/39。
 
 ## 保留(不应动)
 - 输出压缩(逐命令+B/KB/BM25)、套娃守卫、NO_EMULATOR、compact→resume、MCP 沙箱、#2 文风路径。
