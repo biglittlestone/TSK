@@ -1,9 +1,12 @@
-// TSK × DevEco Code 沙盒冒烟测试。
-// 用 node 驱动真实插件（integration/deveco/tsk.plugin.ts）+ 真实 tsk 二进制，
-// 模拟 DevEco 事件流（session.created / tool.execute.before / system.transform），
-// 全部数据落在隔离的临时 TSK_HOME 与临时项目里，不碰真实 ~/.tsk。
+// TSK × DevEco Code 沙盒冒烟测试（对齐 V7 插件设计）。
+// 目标：验证 opencode 平台上 TSK 的「真实价值机制」—— tool.execute.after 输出压缩
+// （大 Bash/工具输出 → 蒸馏只留 关键错误/状态行+结尾 + 超大落盘 KB + 取回指针），
+// 这正是 Claude Code 原生做不到的那条路。并覆盖：read 无损直通、净不模拟器拦截、小输出放行。
 //
-// 运行：node integration/deveco/smoke.test.mjs   （需 tsk 在 PATH，或设 TSK_BIN=路径）
+// 运行：bun integration/deveco/smoke.test.mjs   （插件是 TS + Bun.spawn，须用 bun；tsk 在 PATH）
+// 隔离：process.env.TSK_HOME = 临时家目录，插件 spawn 的 tsk 继承它，不碰真实 ~/.tsk。
+//
+// 注：tool.execute.after 的输出压缩是纯 JS（不 spawn tsk），故本节全确定性；其余钩子按需测。
 import { spawnSync } from "node:child_process"
 import fs from "node:fs"
 import os from "node:os"
@@ -12,169 +15,92 @@ import path from "node:path"
 let passed = 0
 let failed = 0
 const ok = (name, cond, extra = "") => {
-  if (cond) {
-    passed++
-    console.log(`  ✓ ${name}`)
-  } else {
+  if (cond) passed++
+  else {
     failed++
     console.log(`  ✗ ${name}  ${extra}`)
+    return
   }
+  console.log(`  ✓ ${name}`)
 }
 
-// 临时沙盒：隔离 TSK_HOME + 项目 + 大文件
 const base = fs.mkdtempSync(path.join(os.tmpdir(), "tsk-deveco-"))
 const home = path.join(base, "home")
 const proj = path.join(base, "proj")
 fs.mkdirSync(path.join(home), { recursive: true })
-fs.mkdirSync(path.join(proj, ".tsk", "skeletons"), { recursive: true })
+fs.mkdirSync(path.join(proj), { recursive: true })
+process.env.TSK_HOME = home // 让插件 Bun.spawn(["tsk",…]) 继承隔离
+process.env.TSK_JOURNAL_DIR = path.join(proj, ".tsk")
 const big = path.join(proj, "big.txt")
 fs.writeFileSync(big, Array.from({ length: 100 }, (_, i) => `line ${i + 1}\n`).join(""))
-const tskBin = process.env.TSK_BIN || "tsk"
-
-const runTsk = (cmd, input) => {
-  const parts = cmd.trim().split(/\s+/)
-  const r = spawnSync(parts[0], parts.slice(1), {
-    input: input ?? "",
-    encoding: "utf8",
-    env: { ...process.env, TSK_HOME: home },
-  })
-  return JSON.parse(r.stdout || "{}")
-}
-
-// mock DevEco 的 BunShell `$`（Bun.$\`tsk hook X\`.input().quiet().nothrow().json()）
-const shell = (strings, ...exprs) => {
-  const cmd = strings.map((s, i) => s + (exprs[i] ?? "")).join("").trim()
-  const self = {
-    _input: "",
-    input(v) {
-      self._input = v
-      return self
-    },
-    quiet() {
-      return self
-    },
-    nothrow() {
-      return self
-    },
-    json() {
-      return runTsk(cmd, self._input)
-    },
-  }
-  return self
-}
 
 const loadPlugin = async () => {
   const src = fs.readFileSync(path.join(import.meta.dirname, "tsk.plugin.ts"), "utf8")
   const mod = await import("data:text/javascript;base64," + Buffer.from(src).toString("base64"))
-  return mod.default
-}
-const writeCfg = (level) =>
-  fs.writeFileSync(path.join(home, "config.yaml"), `enabled: true\noutput_compression: ${level}\n`)
-
-// ===================== 输入压缩（骨架 / 逃逸口） =====================
-console.log("== 输入压缩 ==")
-writeCfg("full")
-const hooks = await (await loadPlugin())({ $: shell, directory: proj })
-
-// read 大文件 → filePath 改为骨架路径，骨架存在且内容正确
-const out1 = { args: { filePath: big } }
-await hooks["tool.execute.before"]({ tool: "read", sessionID: "s1", callID: "c1" }, out1)
-ok("read 大文件 → filePath 被改写为骨架", out1.args.filePath !== big)
-ok("骨架文件存在", fs.existsSync(out1.args.filePath))
-const sk = fs.readFileSync(out1.args.filePath, "utf8")
-ok("骨架头正确", sk.startsWith("[TSK SKELETON of big.txt | 100 lines total"))
-
-// read 带 offset/limit → 逃逸口，恒放行（filePath 不变）
-const out2 = { args: { filePath: big, offset: 50, limit: 10 } }
-await hooks["tool.execute.before"]({ tool: "read", sessionID: "s1", callID: "c2" }, out2)
-ok("read offset/limit → passthrough（filePath 不变）", out2.args.filePath === big)
-
-// read 非 read 工具 → 不干预
-const out3 = { args: { command: "ls" } }
-await hooks["tool.execute.before"]({ tool: "bash", sessionID: "s1", callID: "c3" }, out3)
-ok("非 read 工具不改写", out3.args.command === "ls")
-
-// 每个用户消息轮调用 UserPromptSubmit；返回的 additionalContext 逐个（drain）冲入 system
-const turnThenTransform = async (hooks, sid) => {
-  await hooks.event({ event: { type: "turn", properties: { sessionID: sid } } })
-  const sys = ["<base system>"]
-  await hooks["experimental.chat.system.transform"]({}, { system: sys })
-  return sys.join("\n")
+  return mod.default // {id, async server({directory})}
 }
 
-// ===================== 输出压缩（system prompt 注入 ruleset） =====================
-console.log("== 输出压缩 ==")
-writeCfg("full")
-const hooks2 = await (await loadPlugin())({ $: shell, directory: proj })
-await hooks2.event({ event: { type: "session.created", properties: { sessionID: "s1" } } })
-const sys = ["<original system>"]
-await hooks2["experimental.chat.system.transform"]({}, { system: sys })
-const joined = sys.join("\n")
-ok("full → ruleset 注入 system prompt", joined.includes("TSK OUTPUT MODE ACTIVE") && joined.includes("HARD RULES"))
-// 幂等：再次 transform 不重复
-const count = joined.split("TSK OUTPUT MODE").length - 1
-await hooks2["experimental.chat.system.transform"]({}, { system: sys })
-ok("system.transform 幂等（ruleset 只注入一次）", sys.join("\n").split("TSK OUTPUT MODE").length - 1 === count)
+const hooks = await (await loadPlugin()).server({ directory: proj })
+const journ = path.join(proj, ".tsk", "injections.jsonl")
+const ctxDir = path.join(proj, ".tsk", "ctx")
 
-// off → 不注入
-writeCfg("off")
-const hooks3 = await (await loadPlugin())({ $: shell, directory: proj })
-await hooks3.event({ event: { type: "session.created", properties: { sessionID: "s1" } } })
-const sysOff = ["<base>"]
-await hooks3["experimental.chat.system.transform"]({}, { system: sysOff })
-ok("off → 不注入 ruleset", !sysOff.join("\n").includes("TSK OUTPUT MODE"))
-
-// lite → 注入 lite 档
-writeCfg("lite")
-const hooks4 = await (await loadPlugin())({ $: shell, directory: proj })
-await hooks4.event({ event: { type: "session.created", properties: { sessionID: "s1" } } })
-const sysLite = ["<base>"]
-await hooks4["experimental.chat.system.transform"]({}, { system: sysLite })
-ok("lite → 注入 lite ruleset", sysLite.join("\n").includes("(level: lite)"))
-
-// ===================== auto 档轮数化（委托 Rust 裁决） =====================
-console.log("== auto 档（第 3 轮起注入） ==")
-writeCfg("auto")
-const prevTurnEvents = process.env.TSK_DEVECO_TURN_EVENTS
-process.env.TSK_DEVECO_TURN_EVENTS = "turn"
-const hooksAuto = await (await loadPlugin())({ $: shell, directory: proj })
-let autoHasRuleset = [false, false, false, false]
-const rulesetHits = [] // 出现 HARD RULES 的轮次（ruleset 应恰在第 3 轮一次）
-for (let i = 1; i <= 5; i++) {
-  const joined = await turnThenTransform(hooksAuto, "auto-s1")
-  if (i <= 4) autoHasRuleset[i - 1] = joined.includes("TSK OUTPUT MODE ACTIVE")
-  if (joined.includes("HARD RULES")) rulesetHits.push(i)
+// ===================== read 无损直通 =====================
+console.log("== read 无损（V7：不再骨架改写） ==")
+{
+  const out = { args: { filePath: big, offset: 0, limit: 100 } }
+  await hooks["tool.execute.before"]({ tool: "read", sessionID: "s1", callID: "c1" }, out)
+  ok("read → filePath 直通不变（无损）", out.args.filePath === big)
 }
-ok("auto 轮1 → 不注入", !autoHasRuleset[0])
-ok("auto 轮2 → 不注入", !autoHasRuleset[1])
-ok("auto 轮3 → 注入 ruleset", autoHasRuleset[2])
-ok("auto 轮4 → 仍注入（reinforce）", autoHasRuleset[3])
-ok("auto ruleset 恰在第 3 轮注入一次（不重复）", rulesetHits.length === 1 && rulesetHits[0] === 3)
-// 空转：session 只有 1-2 轮时 short-session，events.log 仍正确记账（无注入但无残留）
-if (prevTurnEvents === undefined) delete process.env.TSK_DEVECO_TURN_EVENTS
-else process.env.TSK_DEVECO_TURN_EVENTS = prevTurnEvents
+{
+  const out = { args: { filePath: big } }
+  await hooks["tool.execute.before"]({ tool: "read", sessionID: "s1", callID: "c1b" }, out)
+  ok("read 无 offset → 也直通（无损）", out.args.filePath === big)
+}
 
-// ===================== compact → resume（历史上线） =====================
-console.log("== compact → resume ==")
-writeCfg("full")
-// 构造一个可被 snapshot::build 解析的 transcript（JSONL）
-const trPath = path.join(base, "transcript.jsonl")
-fs.writeFileSync(
-  trPath,
-  [
-    JSON.stringify({ type: "user", message: { content: "remember the db schema" } }),
-    JSON.stringify({ type: "assistant", message: { content: "ok, dbschema: users(id, name)" } }),
-  ].join("\n") + "\n",
-)
-process.env.TSK_DEVECO_TRANSCRIPT = trPath
-const hooksC = await (await loadPlugin())({ $: shell, directory: proj })
-await hooksC.event({ event: { type: "session.compacted", properties: { sessionID: "comp-s1" } } })
-const sysCompact = ["<base>"]
-await hooksC["experimental.chat.system.transform"]({}, { system: sysCompact })
-const compacted = sysCompact.join("\n")
-ok("compact → 注入 PreCompact 锚点保护标记", compacted.includes("context window is being compacted"))
-ok("compact → 注入 RESUME（决策/技能摘要）", compacted.includes("RESUME:"))
-ok("compact → resume-snapshot.json 已落盘", fs.existsSync(path.join(home, "comp-s1", "resume-snapshot.json")))
+// ===================== 永不启动模拟器/设备 =====================
+console.log("== 净不模拟器 / 网络拦截 ==")
+{
+  const out = { args: { command: "hdc start emulator && deveco run" } }
+  await hooks["tool.execute.before"]({ tool: "bash", sessionID: "s1", callID: "c2" }, out)
+  // 拦截改写为拦截告知（消息内会回显原命令，故断言前缀而非“不含原串”）
+  ok("模拟器/设备命令被拦截改写", out.args.command.startsWith('echo "[TSK 拦截'))
+}
+{
+  const out = { args: { command: "curl https://x" } }
+  await hooks["tool.execute.before"]({ tool: "bash", sessionID: "s1", callID: "c2b" }, out)
+  ok("curl/wget 网络被拦截", out.args.command.includes("[TSK 路由"))
+}
+{
+  const out = { args: { command: "ls -la" } }
+  await hooks["tool.execute.before"]({ tool: "bash", sessionID: "s1", callID: "c2c" }, out)
+  ok("普通命令放行", out.args.command === "ls -la")
+}
+
+// ===================== tool.execute.after 输出压缩（真实价值机制） =====================
+console.log("== tool.execute.after 输出压缩（opencode 独有、Claude 原生做不到）==")
+// 构造 ~6KB 含大量错误行的构建输出：>800*2 触发；含错误行 → verbose；>5KB 且命令命中 intent → 落盘 KB
+{
+  const err = Array.from({ length: 40 }, (_, i) => `ERROR build-${i}: cannot resolve module 'x${i}'`).join("\n")
+  const noise = Array.from({ length: 2000 }, (_, i) => `step-${String(i).padStart(4, "0")} init worker done queue ${i % 7} take ${i % 3}`).join("\n")
+  const raw = `npm run build\n${noise}\n${err}\n----------\nBUILD FAILED with 40 errors` // ~85KB
+  const out = { output: raw }
+  await hooks["tool.execute.after"](
+    { tool: "bash", sessionID: "s1", callID: "c4", args: { command: "analyze build log for errors" } },
+    out,
+  )
+  ok("大输出被改写（含 TSK 沙箱标记）", out.output.includes("[TSK 沙箱") && out.output.includes("原文 ") && out.output.includes("tok"))
+  ok("蒸馏保留关键错误行（错误感知）", out.output.includes("── 关键错误/状态行 ──") && out.output.includes("cannot resolve module"))
+  ok("蒸馏保留结尾（BUILD 结果）", out.output.includes("BUILD FAILED") || out.output.includes("── 结尾 ──"))
+  ok("超大输出落盘 KB + 取回指针", out.output.includes(".tsk/ctx/k") && fs.readdirSync(ctxDir).some((f) => f.endsWith(".txt")))
+  ok("journal 记 sandbox-output（含原始/蒸馏规模）", fs.existsSync(journ) && fs.readFileSync(journ, "utf8").includes("sandbox-output"))
+}
+
+// 小输出（≤1600 字符）放行不动
+{
+  const out = { output: "ok\n" }
+  await hooks["tool.execute.after"]({ tool: "bash", sessionID: "s1", callID: "c5", args: { command: "pwd" } }, out)
+  ok("小输出放行不动", out.output === "ok\n")
+}
 
 fs.rmSync(base, { recursive: true, force: true })
 console.log(`\n结果: ${passed} 通过 / ${failed} 失败`)
