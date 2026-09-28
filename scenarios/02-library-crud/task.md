@@ -1,9 +1,10 @@
-请基于 `reference-spec.md` 实现图书管理 Web 应用，产出在 `solution/`（index.html 或 index.html+app.js+style.css，自包含无框架）。不要提问。完成后写一个 Node 无头验证脚本 `verify.mjs`，覆盖并修复到全过：
+请基于 `reference-spec.md` 实现图书管理 Web 应用，产出在 `solution/`（index.html 或 index.html+app.js+style.css，自包含无框架）。不要提问。同时参考 `reference/books.json`——那是 1,100 本真实格式的图书目录（约 258KB），**用它为准**：数据模型的字段/ISBN 格式/分类集合/借阅与借期字段都以它为准；应用初始化时可从其中抽样一批（或全部）作为 localStorage 的种子数据。不要逐一读完全部 1100 条，按需抽样格式即可。完成后写一个 Node 无头验证脚本 `verify.mjs`，覆盖并修复到全过：
 
 1. 新增一本《三体·黑暗森林》→ 列表出现。
 2. 借出 → 状态 borrowed、借书人/应还日期生效；归还 → 状态回 in。
 3. 删除 → 列表消失。
 4. 刷新（重载页面数据源）→ 数据仍在（localStorage 持久化）。
 5. 搜索 "三体" 命中，按分类筛选生效。
+6. 应用从 `reference/books.json` 抽样的种子数据能正确加载并显示（至少含不同分类的若干本）。
 
 说明实现与每个验证结果。

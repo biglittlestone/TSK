@@ -1,3 +1,18 @@
-<!doctype html><html><head><meta charset="utf-8"><title>Todo</title></head>
-<body><input id="input" placeholder="add"><button id="addbtn">+</button><ul id="list"></ul>
-<script src="app.js"></script></body></html>
+<!doctype html>
+<html lang="zh"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Todo</title>
+<link rel="stylesheet" href="style.css">
+</head><body>
+<header><h1>待办</h1><span id="count" class="badge"></span></header>
+<main>
+  <div class="toolbar">
+    <input id="input" placeholder="添加待办…"><button id="addbtn" aria-label="添加">+</button>
+    <button id="toggle-all" class="ghost">全选✓</button>
+    <select id="filter"><option value="all">全部</option><option value="active">未完成</option><option value="done">已完成</option></select>
+  </div>
+  <ul id="list"></ul>
+  <footer><span id="left"></span><button id="clear-done" class="ghost">清除已完成</button></footer>
+</main>
+<script src="app.js"></script>
+</body></html>

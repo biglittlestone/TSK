@@ -25,3 +25,10 @@ bun.lockb
 /dist/**/bin/
 /dist/**/*.exe
 /dist/**/*.zip
+
+# 基准运行产物 / 探针残留（不可复现，不入仓）
+/scenarios/results/
+/scenarios/*/solution/
+/scenarios/02-library-crud/solution-seed.json
+/scenarios/04-sandbox-doc/verify.mjs
+/_io/
