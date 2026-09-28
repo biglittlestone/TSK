@@ -75,6 +75,10 @@ pub fn collect_indexed() -> Vec<IndexedFile> {
             }
         }
     }
+    // 项目 .tsk/kb（相对 cwd）—— deveco/opencode 输出压缩落盘处，tsk search 可直接检索
+    if let Ok(cwd) = std::env::current_dir() {
+        scan(&cwd.join(".").join(".tsk").join("kb"), "local");
+    }
     out
 }
 

@@ -54,7 +54,7 @@ function cleanEnv() {
 
 // 惰性 node:fs
 const fs = async () => { try { return await import("node:fs") } catch { return undefined } }
-const kbd = (cwd: string) => `${cwd}/.tsk/ctx`
+const kbd = (cwd: string) => `${cwd}/.tsk/kb`
 const kbfs = async (cwd: string) => {
   const f = await fs(); if (!f) return undefined
   const d = kbd(cwd); f.mkdirSync(d, { recursive: true }); return { f, d }
@@ -243,7 +243,7 @@ export default {
           `[TSK 沙箱：该操作 {${tool}} 已在沙箱执行完成，原文 ${raw.length} 字符(≈${Math.ceil(raw.length / 4)} tok)。` +
           `中间过程未进入上下文，仅保留最终结果。\n` +
           (kbPointer
-            ? `原始数据已落盘知识库：${kbPointer}\n若需完整内容，请用 read/cat 直接读取该文件；检索索引(.tsk/ctx/index.json5)可按关键词 grep 定位相关片段。\n`
+            ? `原始数据已落盘知识库：${kbPointer}\n若需完整内容，请 read/cat 读取该文件，或 tsk search "关键词" 精确取回相关片段（索引 .tsk/kb/index.json5）。\n`
             : `需要完整输出请再运行原命令查看。\n`) +
           `${final.text}`
         await journal({
@@ -278,7 +278,7 @@ export default {
           }
           if (parts.length) oldCondensed.push({ info: m.info, parts })
         }
-        const notice = { info: { role: "user" }, parts: [{ type: "text", text: "[TSK 压缩: 较早轮次的工具输出已省略以控制上下文。若需某文件/日志原文，请按之前给出的 .tsk/ctx 指针 read/cat 取回。" }] }
+        const notice = { info: { role: "user" }, parts: [{ type: "text", text: "[TSK 压缩: 较早轮次的工具输出已省略以控制上下文。若需某文件/日志原文，请按之前给出的 .tsk/kb 指针 read/cat 或 tsk search 取回。" }] }
         output.messages = [...oldCondensed, notice, ...keep]
         if (droppedChars > 0) await journal({
           kind: "l2-history-compress", sessionID: input?.sessionID ?? "",

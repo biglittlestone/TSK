@@ -42,7 +42,7 @@ const loadPlugin = async () => {
 
 const hooks = await (await loadPlugin()).server({ directory: proj })
 const journ = path.join(proj, ".tsk", "injections.jsonl")
-const ctxDir = path.join(proj, ".tsk", "ctx")
+const ctxDir = path.join(proj, ".tsk", "kb")
 
 // ===================== read 无损直通 =====================
 console.log("== read 无损（V7：不再骨架改写） ==")
@@ -91,7 +91,7 @@ console.log("== tool.execute.after 输出压缩（opencode 独有、Claude 原�
   ok("大输出被改写（含 TSK 沙箱标记）", out.output.includes("[TSK 沙箱") && out.output.includes("原文 ") && out.output.includes("tok"))
   ok("蒸馏保留关键错误行（错误感知）", out.output.includes("── 关键错误/状态行 ──") && out.output.includes("cannot resolve module"))
   ok("蒸馏保留结尾（BUILD 结果）", out.output.includes("BUILD FAILED") || out.output.includes("── 结尾 ──"))
-  ok("超大输出落盘 KB + 取回指针", out.output.includes(".tsk/ctx/k") && fs.readdirSync(ctxDir).some((f) => f.endsWith(".txt")))
+  ok("超大输出落盘 KB + 取回指针", out.output.includes(".tsk/kb/k") && fs.readdirSync(ctxDir).some((f) => f.endsWith(".txt")))
   ok("journal 记 sandbox-output（含原始/蒸馏规模）", fs.existsSync(journ) && fs.readFileSync(journ, "utf8").includes("sandbox-output"))
 }
 
