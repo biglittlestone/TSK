@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# S2-git-refactor: 6文件模块重构+git 逐步提交 —— 在 $1 根生成确定性基线（真实 provisioning 由场景运行前置脚本补齐）
+# S2-git-refactor —— 6 文件 + 6 commit 基线
 set -euo pipefail
 cd "${1:?workdir}"
-echo "[seed] S2-git-refactor 基线就绪（请按 DEVECO-BENCHMARKS.md 的运行前置补真实 workspace）"
+if [ ! -d .git ]; then git init -q; for i in 1 2 3 4 5 6; do printf 'export const f%s = %s;\n' "$i" "$i" > mod$i.js; git add .; git commit -qm "feat: mod $i"; done; fi
+git rev-list --count HEAD | xargs echo "[S2] commits:"

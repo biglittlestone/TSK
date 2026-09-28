@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# S10-parallel-build: 3模块并行构建+集成排错(B分节) —— 在 $1 根生成确定性基线（真实 provisioning 由场景运行前置脚本补齐）
+# integration/deveco/benchmark/scenarios/S10-parallel-build —— $1 根基线
 set -euo pipefail
 cd "${1:?workdir}"
-echo "[seed] S10-parallel-build 基线就绪（请按 DEVECO-BENCHMARKS.md 的运行前置补真实 workspace）"
+for m in A B C; do mkdir -p m$m; printf 'export const mod%s;\n' "$m" > m$m/mod.js; done
+echo [seed] integration/deveco/benchmark/scenarios/S10-parallel-build ok

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# S5-kb-build: 研读5文件产设计文档(沙箱+检索) —— 在 $1 根生成确定性基线（真实 provisioning 由场景运行前置脚本补齐）
+# integration/deveco/benchmark/scenarios/S5-kb-build —— $1 根基线
 set -euo pipefail
 cd "${1:?workdir}"
-echo "[seed] S5-kb-build 基线就绪（请按 DEVECO-BENCHMARKS.md 的运行前置补真实 workspace）"
+for i in 1 2 3 4 5; do printf 'export function api%s(p){return p+%s;}\n' "$i" "$i" > f$i.js; done
+echo [seed] integration/deveco/benchmark/scenarios/S5-kb-build ok
