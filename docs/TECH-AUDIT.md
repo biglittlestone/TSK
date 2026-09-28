@@ -49,8 +49,8 @@
 
 > 保守项不删：MCP 沙箱（◇）、deveco 的 before 策略与 compact/resume（保连续性）、套娃守卫。
 ## 执行结果（本轮已落）
-- **#1 插件层禁用 read 骨架**：plugin.json 与 `add_tsk_hooks` 移除 PreToolUse/PostToolUse hook（Claude 不再装）。**Rust pretooluse/posttooluse 实现保留**（取消物理删除——删它波及 14 个 smoke/e2e 断言骨架的测试；保留为未布线实现，测试仍绿）。
+- **#1 物理移除 read 骨架**（含代码与测试）：cli + core 删 `pretooluse`/`posttooluse` 及专属 helper（plan_externalize/plan_skeleton/try_sandbox_plan/rewrite/file_bytes/retrieval_bytes）、`events.rs` 删 PreToolUse/PostToolUse 变体、`main.rs` 删 dispatch。插件与 `add_tsk_hooks` 均不再装 Pre/Post hook。删 16+3 个 read 骨架测试 + 8 个死 helper。`tsk hook PreToolUse` 现报 unknown event。
 - **#2 文风路径保留**（config 仍 off）。
 - **#3 拆除**：deveco L2 `experimental.chat.messages.transform` 死分支已删，smoke 39/39。
 - **#4 口径**：`tsk report --all` 新增"deveco 输出压缩 saved token/N 次大输出"（读 `<cwd>/.tsk/injections.jsonl` sandbox-output）。
-- Rust 测试 10+34+20 全绿 + deveco smoke 39/39；二进制已重部署。
+- Rust 测试 7+18+20 全绿（无 dead_code 警告）+ deveco smoke 39/39；二进制已重部署。

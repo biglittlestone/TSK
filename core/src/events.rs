@@ -6,8 +6,6 @@ use serde_json::Value;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Event {
-    PreToolUse,
-    PostToolUse,
     SessionStart,
     UserPromptSubmit,
     PreCompact,
@@ -16,8 +14,6 @@ pub enum Event {
 impl Event {
     pub fn parse(s: &str) -> Option<Self> {
         match s {
-            "PreToolUse" => Some(Self::PreToolUse),
-            "PostToolUse" => Some(Self::PostToolUse),
             "SessionStart" => Some(Self::SessionStart),
             "UserPromptSubmit" => Some(Self::UserPromptSubmit),
             "PreCompact" => Some(Self::PreCompact),
@@ -97,8 +93,6 @@ fn specific(event: &str, body: Value) -> Value {
 impl Event {
     pub fn name(&self) -> &'static str {
         match self {
-            Event::PreToolUse => "PreToolUse",
-            Event::PostToolUse => "PostToolUse",
             Event::SessionStart => "SessionStart",
             Event::UserPromptSubmit => "UserPromptSubmit",
             Event::PreCompact => "PreCompact",

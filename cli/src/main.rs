@@ -107,8 +107,6 @@ fn run() -> Result<String, String> {
             storage::write_current_session(&ev.session_id);
             let cfg = Config::load(&storage::tsk_home().join("config.yaml"));
             Ok(match events::Event::parse(&event) {
-                Some(events::Event::PreToolUse) => tsk_core::inject::pretooluse(&cfg, &ev).to_string(),
-                Some(events::Event::PostToolUse) => tsk_core::inject::posttooluse(&cfg, &ev).to_string(),
                 Some(events::Event::SessionStart) => tsk_core::inject::session_start(&cfg, &ev).to_string(),
                 Some(events::Event::UserPromptSubmit) => tsk_core::inject::user_prompt(&cfg, &ev).to_string(),
                 Some(events::Event::PreCompact) => tsk_core::inject::precompact(&cfg, &ev).to_string(),

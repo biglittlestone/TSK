@@ -56,89 +56,8 @@ fn read_cfg(home: &PathBuf, key: &str) -> Option<String> {
         })
 }
 
-fn read_home(home: &PathBuf, session: &str) -> String {
-    std::fs::read_to_string(home.join(format!("{session}/ledger.jsonl"))).unwrap_or_default()
-}
 
-/// Structural invariants of a rewrite: the marker names the source file, the head
-/// keeps exactly 5 lines, the tail exactly 3, and both stay in original order.
-fn assert_skeleton(out: &str) {
-    let v: serde_json::Value = serde_json::from_str(out).unwrap();
-    let fp = v.pointer("/hookSpecificOutput/updatedInput/file_path").unwrap();
-    let body = std::fs::read_to_string(fp.as_str().unwrap()).unwrap();
-    let lines: Vec<&str> = body.lines().collect();
-    assert!(lines.first().unwrap().starts_with("[TSK SKELETON of bigfile.txt | 100 lines total"));
-    // 5 head lines, right-aligned to 6 columns, TAB, original text.
-    assert!(lines[1].starts_with("     1\t"));
-    assert!(lines[5].starts_with("     5\t"));
-    // Omission marker names the omitted range and points at the escape hatch.
-    assert!(lines[6].starts_with("[TSK omitted lines 6..97."));
-    assert!(lines[6].contains("Read bigfile.txt with offset/limit"));
-    // 3 tail lines, in original order, numbered from the file's true end.
-    assert!(lines[7].starts_with("    98\t"));
-    assert!(lines[9].starts_with("   100\t"));
-    assert_eq!(lines.len(), 10);
-}
 
-fn bigfile(project: &Path) -> PathBuf {
-    let f = project.join("bigfile.txt");
-    std::fs::write(&f, (1..=100).map(|i| format!("line {i}\n")).collect::<String>()).unwrap();
-    f
-}
-
-#[test]
-fn fail_open_on_malformed_input() {
-    let (home, project) = setup();
-    // (args, stdin, should_fail_open). A well-formed event is not an error — it
-    // just produces `{}` on stdout with no stderr.
-    for (args, stdin, should_fail_open) in [
-        (["hook", "PreToolUse"], "not json", true),
-        (["hook", "PostToolUse"], "{}", false),
-        (["hook", "NoSuchEvent"], "{}", true),
-    ] {
-        let out = run_tsk(&home, &args, stdin, &project);
-        assert_eq!(out.status.code(), Some(0), "exit code for {args:?}");
-        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "{}", "stdout for {args:?}");
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        if should_fail_open {
-            assert!(stderr.contains("fail-open"), "expected fail-open stderr for {args:?}, got: {stderr}");
-        } else {
-            assert!(!stderr.contains("fail-open"), "unexpected fail-open for valid input {args:?}: {stderr}");
-        }
-    }
-}
-
-#[test]
-fn escape_hatch_passthroughs_with_ledger_line() {
-    let (home, project) = setup();
-    let file = bigfile(&project);
-    // Rust pretooluse 仍保留实现（read 骨架）；插件层已不装 PreToolUse hook（add_tsk_hooks/plugin.json 移除）。
-    let stdin = format!(
-        r#"{{"session_id":"s1","cwd":"{}","tool_name":"Read","tool_input":{{"file_path":"{}","offset":50,"limit":10}}}}"#,
-        p(&project),
-        p(&file)
-    );
-    let out = run_tsk(&home, &["hook", "PreToolUse"], &stdin, &project);
-    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "{}");
-    let led = read_home(&home, "s1");
-    assert!(led.contains("\"kind\":\"retrieval\""));
-}
-
-#[test]
-fn pretooluse_produces_a_deterministic_skeleton() {
-    let (home, project) = setup();
-    let file = bigfile(&project);
-    let stdin = format!(
-        r#"{{"session_id":"s1","cwd":"{}","tool_name":"Read","tool_input":{{"file_path":"{}"}}}}"#,
-        p(&project),
-        p(&file)
-    );
-    let out = run_tsk(&home, &["hook", "PreToolUse"], &stdin, &project);
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("hookSpecificOutput"), "stdout: {stdout}");
-    let led = read_home(&home, "s1");
-    assert!(led.contains("\"kind\":\"rewrite\""));
-}
 
 #[test]
 fn tiny_and_missing_files_pass_through() {
