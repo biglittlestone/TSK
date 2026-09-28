@@ -19,6 +19,9 @@ const FINAL_RESULT_KEEP = 800         // 最终只保留尾部多少字符（构
 const HARD_CAP_BYTES = 16 * 1024 * 1024 // 沙箱 stdout 硬上限（超限杀进程树）
 const KB_INTENT_THRESHOLD = 5 * 1024  // 大输出且带 intent → 入知识库
 const KB_AUTO_THRESHOLD = 100 * 1024  // 超过此自动入知识库
+const CAP_LIST = 20                    // rtk 式：列表类命令保留前 N 项
+const CAP_ERR = 20                     // 测试/构建：前 N 条失败
+const CAP_WARN = 10
 const KB_TITLE_PREVIEW = 120          // 检索只回标题 + 120 字符预览
 const SANDBOX_TOOLS = new Set(["bash", "build_project", "arkts_check"])
 const READONLY_CMD = /^(cat|ls|find|grep|head|tail|sed|awk|wc|env|printenv|echo|pwd|which|type|file|stat|du|df|tree)\b/
@@ -157,6 +160,46 @@ export default {
       return { text, kept: Math.min(kept, s.length) }
     }
 
+    // rtk 式：逐命令语义压缩（有损但符合工具短结果格式）。无损靠调用方把 raw 落盘 KB 保回取。
+    // 未识别的命令返回 null → 落回上面的通用 distill。
+    const compactByCommand = (cmd: string, raw: string): string | null => {
+      const is = (c: string) => new RegExp(`(^|[\s/:])${c}( ?|$)`, "i").test(cmd)
+      const lines = ansiStrip(raw).split("\n").map((l) => l.replace(/[\r\n]+$/, "")).filter((l) => l.trim() !== "")
+      const head = (a: string[], n = CAP_LIST) => { const h = a.slice(0, n); return h.join("\n") + (a.length > n ? `\n… +${a.length - n} more` : "") }
+      // ---- ls / tree / find：目录列出 → 计数 + 前 N 项（仍像目录列表） ----
+      if (is("ls") || /\b(tree|find)\b/.test(cmd)) {
+        // 长格式(-l)：取权限串后的文件名(最后一个 token)；单列(-1)：整行即文件名
+        const names = lines
+          .filter((l) => !/^total \d/.test(l) && l !== "." && l !== "..")
+          .map((l) => (/^[bcdlps-][rwx-]{9}/.test(l) ? (l.trim().split(/\s+/).pop() || l) : l))
+        const dirs = names.filter((l) => l.endsWith("/"))
+        const files = names.filter((l) => !l.endsWith("/"))
+        const head0 = names.slice(0, CAP_LIST)
+        return `${dirs.length} dir${dirs.length === 1 ? "" : "s"}, ${files.length} file${files.length === 1 ? "" : "s"}${head0.length ? ":\n" + head0.join("\n") : ""}${names.length > CAP_LIST ? `\n… +${names.length - CAP_LIST} more` : ""}`
+      }
+      // ---- git status：按状态分组（M/A/D/R/U/??）+ 数量，像 git 短格式 ----
+      if (is("git") && /\bstatus\b/.test(cmd)) {
+        const groups: Record<string, string[]> = {}
+        for (const l of lines) {
+          const m = /^([MADRCU?! ]{2}|[ MADRCU?]) (?:\s*)(.+)$/.exec(l)
+          if (m) { const st = m[1].replace(/ /g, "") || "?"; (groups[st] ??= []).push(m[2]) }
+        }
+        const keys = Object.keys(groups)
+        if (!keys.length) return raw.trim().slice(0, FINAL_RESULT_KEEP) // 干净 or 长格式 → 保尾
+        return `git status (${lines.length - 1} 行)：\n` + keys.map((st) => `${st} (${groups[st].length}):\n${head(groups[st])}`).join("\n")
+      }
+      // ---- 测试/构建/lint：报告状 —— 通过率 + 前 N 条失败，像测试报告 ----
+      if (/(vitest|jest|mocha|phpunit|pytest|ctest|golangci)/.test(cmd) || (/test/.test(cmd) && /(pass|fail|✓|✗|✖|Tests:|Suites:)|failed/i.test(raw))) {
+        const summary = lines.filter((l) => /(Tests:|test suites|passed|failed|✓ \d|✗ \d|Tests:|Suites:|passed\s+\d|failed\s+\d)/i.test(l)).slice(0, 4)
+        const fails = lines.filter((l) => /(✖|✗|×|FAIL|failed|Error:|\berror[s]?\b)/i.test(l)).slice(0, CAP_ERR)
+        const parts: string[] = []
+        if (summary.length) parts.push(summary.join("\n"))
+        if (fails.length) parts.push(`failures (${fails.length} shown):\n${fails.join("\n")}`)
+        return parts.length ? parts.join("\n\n") : null
+      }
+      return null
+    }
+
     // ———— 文件化知识库（倒排索引） ————
     const kbid = (raw: string) => { let h = 0; for (let i = 0; i < raw.length; i++) h = (h * 31 + raw.charCodeAt(i)) | 0; return `k${(h >>> 0).toString(16)}` }
     const tokenize = (s: string) => (s.toLowerCase().match(/[a-z0-9_]{2,}/g) || []).filter((w) => !["the","and","for","are","was","with","this","that","from","have","tsk"].includes(w))
@@ -217,21 +260,34 @@ export default {
         // size gate：小输出(≤1600字符)直接放行不动，避免每个 bash 都被包一层「沙箱」噪声
         if (src.length <= FINAL_RESULT_KEEP * 2) return
 
-        // 建 sandbox-重跑的原始+蒸馏（read 类命令幂等 → 用重跑结果；否则用真实输出走管线）
+        // rtk 式逐命令语义压缩：命中 → 用紧凑但符合工具格式的文本；未命中 → 通用管线。
+        // 无损保证：只要做了紧凑，就一定把原文落盘 KB，模型可 read/cat 或 tsk search 取回完整内容。
+        const compact = compactByCommand(cmd, src)
         let raw = src
-        let distilled = ""
-        if (tool === "bash" && READONLY_CMD.test(cmd)) {
-          const sb = await sandboxRun(cmd, cwd)
-          if (!sb.over) { raw = sb.out; distilled = compressPipeline(sb.out, cmd) }
+        let final: { text: string; kept: number }
+        if (compact !== null) {
+          raw = src
+          final = { text: compact, kept: compact.length }
+        } else {
+          // 建 sandbox-重跑的原始+蒸馏（read 类命令幂等 → 用重跑结果；否则用真实输出走管线）
+          raw = src
+          let distilledRaw = ""
+          if (tool === "bash" && READONLY_CMD.test(cmd)) {
+            const sb = await sandboxRun(cmd, cwd)
+            if (!sb.over) { raw = sb.out; distilledRaw = compressPipeline(sb.out, cmd) }
+          }
+          if (!distilledRaw) distilledRaw = compressPipeline(src, cmd)
+          final = distill(distilledRaw)
         }
-        if (!distilled) distilled = compressPipeline(src, cmd)
+        goldens.set(input?.callID ?? `c${Date.now()}`, { distilled: final.text, raw })
 
-        const final = distill(distilled)
-        goldens.set(input?.callID ?? `c${Date.now()}`, { distilled, raw })
-
-        // 大输出 → 文件化知识库；并把「取回原文的指针 + 检索方式」写进上下文（外置全文回读=显式检索）
+        // 大输出 → 文件化知识库；并把「取回原文的指针 + 检索方式」写进上下文（外置全文回读=显式检索）。
+        // rtk 式命中 → 必落盘（无损）；否则沿用阈值 + 意图。
         let kbPointer = ""
-        if (raw.length > KB_AUTO_THRESHOLD || (raw.length > KB_INTENT_THRESHOLD && /analy|summari|report|error|snapshot|parse|提取|分析|汇总/.test(cmd))) {
+        const wantKB = compact !== null
+          || raw.length > KB_AUTO_THRESHOLD
+          || (raw.length > KB_INTENT_THRESHOLD && /analy|summari|report|error|snapshot|parse|提取|分析|汇总/.test(cmd))
+        if (wantKB) {
           const id = await kbsave(kbid(raw), raw, cmd, cmd)
           if (id) {
             kbPointer = "<" + (kbd(cwd).replace(/\\/g, "/") + "/" + id + ".txt") + ">"
@@ -243,7 +299,7 @@ export default {
           `[TSK 沙箱：该操作 {${tool}} 已在沙箱执行完成，原文 ${raw.length} 字符(≈${Math.ceil(raw.length / 4)} tok)。` +
           `中间过程未进入上下文，仅保留最终结果。\n` +
           (kbPointer
-            ? `原始数据已落盘知识库：${kbPointer}\n若需完整内容，请 read/cat 读取该文件，或 tsk search "关键词" 精确取回相关片段（索引 .tsk/kb/index.json5）。\n`
+            ? `原始数据已落盘知识库(无损可回取)：${kbPointer}\n如需完整输出请 read/cat 该文件，或 tsk search "关键词" 精确取回相关片段。\n`
             : `需要完整输出请再运行原命令查看。\n`) +
           `${final.text}`
         await journal({

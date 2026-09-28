@@ -102,6 +102,36 @@ console.log("== tool.execute.after 输出压缩（opencode 独有、Claude 原�
   ok("小输出放行不动", out.output === "ok\n")
 }
 
+// ===================== rtk 式：逐命令语义压缩（符合工具短结果格式 + 无损落盘） =====================
+console.log("== rtk 式逐命令压缩（ls / git status / test）==")
+{
+  // ls：很多文件 → 计数 + 前 N 项 + more，仍是目录列表形态
+  const raw = Array.from({ length: 60 }, (_, i) => `${i < 20 ? "drwxr-xr-x" : "-rw-r--r--"} user grp ${1000 + i} Sep 27 10:00 ${"mod" + String(i).padStart(2, "0")}`).join("\n")
+  const out = { output: raw }
+  await hooks["tool.execute.after"]({ tool: "bash", sessionID: "s1", callID: "c6", args: { command: "ls -la" } }, out)
+  ok("ls → 计数+前N项（目录形态）", /dirs?, \d+ files?:/.test(out.output) && /mod00/.test(out.output))
+  ok("ls → 超 CAP 有 +more", out.output.includes("more"))
+  ok("ls → 无损落盘 KB 可回取（含 60 项原文）", out.output.includes(".tsk/kb/k") && fs.readFileSync(fs.readdirSync(ctxDir).filter((f) => f.endsWith(".txt")).map((f) => path.join(ctxDir, f)).find((p) => (fs.readFileSync(p, "utf8").split("\n").length >= 60)), "utf8").split("\n").length >= 60)
+}
+{
+  // git status --short → 按状态分组 + 数量（像 git 短格式）；raw >1600 过 size gate
+  const raw = Array.from({ length: 140 }, (_, i) => i % 3 === 0 ? `M  mod${i}.ts` : i % 3 === 1 ? `?? untracked${i}.js` : `A  added${i}.ts`).join("\n")
+  const out = { output: raw }
+  await hooks["tool.execute.after"]({ tool: "bash", sessionID: "s1", callID: "c7", args: { command: "git status --short" } }, out)
+  ok("git status → 按状态分组+数量", /M \(\d+\)/.test(out.output) && /A \(\d+\)/.test(out.output) && /.. \(\d+\)/.test(out.output))
+  ok("git status → 无损落盘", out.output.includes(".tsk/kb/k"))
+}
+{
+  // vitest → 报告状：Tests 汇总 + 前 N 条失败
+  const fails = Array.from({ length: 40 }, (_, i) => `✗ tests/foo${i}.test.ts > case ${i}\n  AssertionError: expected ${i} to equal ${9 - i}`).join("\n")
+  const raw = ` RUN  v2\n ${JSON.stringify({ numTotalTests: 40, numPassedTests: 0, numFailedTests: 40 })}\n\n${fails}\n Test Files  1 failed (1)\n Tests  0 passed | 40 failed (40)`
+  const out = { output: raw }
+  await hooks["tool.execute.after"]({ tool: "bash", sessionID: "s1", callID: "c8", args: { command: "npx vitest run" } }, out)
+  ok("test → 报告状（保留 Tests 行 + failures 上限）", /Tests\s+0 passed|10 created|failures \(\d+ shown\)/.test(out.output) || /failed/.test(out.output))
+  ok("test → failures 不超过 CAP_ERR+收尾", out.output.length < (raw.length - 20))
+  ok("test → 无损落盘", out.output.includes(".tsk/kb/k"))
+}
+
 fs.rmSync(base, { recursive: true, force: true })
 console.log(`\n结果: ${passed} 通过 / ${failed} 失败`)
 process.exit(failed > 0 ? 1 : 0)
