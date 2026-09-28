@@ -68,16 +68,6 @@ impl Config {
     }
 }
 
-/// Head lines kept in a skeleton. (spec §2.2)
-pub const SKELETON_HEAD: usize = 5;
-/// Tail lines kept in a skeleton.
-pub const SKELETON_TAIL: usize = 3;
-/// Files with fewer lines than this are not compressed (head+tail would overlap).
-pub const MIN_LINES: usize = 8;
-/// Below this size, a `Read` goes straight to the skeleton path.
-pub const ROUTE_THRESHOLD: usize = 50 * 1024;
-/// Above this size, a `Read` result is externalized to a pointer + excerpt.
-pub const EXTERNALIZE_THRESHOLD: usize = 100 * 1024;
 /// Max sandbox stdout; beyond this it is summarized and externalized.
 pub const SANDBOX_MAX_OUTPUT: usize = 64 * 1024;
 /// Inputs larger than this are refused outright.

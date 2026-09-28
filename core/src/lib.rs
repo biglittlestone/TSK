@@ -4,11 +4,9 @@
 //! Errors propagate as `Result`; the CLI `main` is the single catch point.
 
 pub mod config;
-pub mod compress;
 pub mod events;
 pub mod inject;
 pub mod ledger;
-pub mod policy;
 pub mod sandbox;
 pub mod search;
 pub mod snapshot;
