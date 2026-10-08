@@ -33,11 +33,20 @@ pub fn compact_by_command(cmd: &str, raw: &str) -> Option<String> {
     let lines = lines_of(raw);
     // ---- ls / tree ----
     if is(cmd, "ls") || is(cmd, "tree") {
-        let names: Vec<String> = lines.iter().filter(|l| !l.starts_with("total ")).map(|l| {
-            if Regex::new(r"^[bcdlps-][rwx-]{9}").unwrap().is_match(l) {
-                l.split_whitespace().last().map(|s| s.to_string()).unwrap_or_else(|| l.to_string())
-            } else { l.to_string() }
-        }).collect();
+        // 过滤: total 行 / `.` `..` 噪音 / `./xxx:` 递归目录标题行(目录名已在项列表里)
+        let names: Vec<String> = lines.iter()
+            .filter(|l| !l.starts_with("total "))
+            .filter(|l| !l.trim().starts_with("./") || !l.trim().ends_with(':'))
+            .map(|l| {
+                if Regex::new(r"^[bcdlps-][rwx-]{9}").unwrap().is_match(l) {
+                    // 目录项(drwx…)带斜杠后缀便于计数；普通文件取最后字段
+                    let last = l.split_whitespace().last().unwrap_or_else(|| l.as_str());
+                    if l.starts_with('d') { format!("{last}/") } else { last.to_string() }
+                } else { l.to_string() }
+            })
+            // `.` `..` 在 ls -laR 里是权限行(drwx… .)，取名字后变成 `.`/`../` → 再滤一次
+            .filter(|n| n.trim().trim_end_matches('/') != "." && n.trim().trim_end_matches('/') != "..")
+            .collect();
         let dirs = names.iter().filter(|n| n.ends_with('/')).count();
         let files = names.len() - dirs;
         let shown = names.iter().take(CAP_LIST).cloned().collect::<Vec<_>>().join("\n");

@@ -320,13 +320,14 @@ export default {
           }
         }
 
-        output.output =
-          `[TSK 沙箱：该操作 {${tool}} 已在沙箱执行完成，原文 ${raw.length} 字符(≈${Math.ceil(raw.length / 4)} tok)。` +
-          `中间过程未进入上下文，仅保留最终结果。\n` +
-          (kbPointer
-            ? `原始数据已落盘知识库(无损可回取)：${kbPointer}\n精确原文用 tsk search "关键词" 按需取回片段；cat/read 可得完整原文（直通）。\n`
-            : `需要完整输出请再运行原命令查看。\n`) +
-          `${final.text}${sectionMap}`
+        // 包裹头极简（rtk 风格）：只告诉模型 3 件事——压缩幅度、全文位置、取回方式。
+        // 不写"沙箱执行/中间过程"等内部细节（模型不需要知道实现），省固定开销。
+        // tok 估算是 raw/4 的派生值，字节比已传达幅度，不再附 token 换算。
+        const hdr = `[TSK {${tool}}: 压 ${raw.length}B→${final.kept}B]`
+        const retr = kbPointer
+          ? `\n全文: ${kbPointer} (cat 直通；tsk search "<关键词>" 精取)`
+          : `\n需要完整输出请重跑原命令。`
+        output.output = `${hdr}${retr}\n${final.text}${sectionMap}`
         // 章节数计入记账，便于报告核对分节收益
         lastSections = sectionMap ? (sectionMap.match(/§ 章节\((\d+)\)/)?.[1] ?? "") : ""
         await journal({

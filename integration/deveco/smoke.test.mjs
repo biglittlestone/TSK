@@ -88,7 +88,7 @@ console.log("== tool.execute.after 输出压缩（opencode 独有、Claude 原�
     { tool: "bash", sessionID: "s1", callID: "c4", args: { command: "analyze build log for errors" } },
     out,
   )
-  ok("大输出被改写（含 TSK 沙箱标记）", out.output.includes("[TSK 沙箱") && out.output.includes("原文 ") && out.output.includes("tok"))
+  ok("大输出被改写（含 TSK 标记）", out.output.includes("[TSK {bash}: 压 ") && out.output.includes("B→") && out.output.includes("全文"))
   ok("蒸馏保留关键错误行（错误感知）", out.output.includes("── 关键错误/状态行 ──") && out.output.includes("cannot resolve module"))
   ok("蒸馏保留结尾（BUILD 结果）", out.output.includes("BUILD FAILED") || out.output.includes("── 结尾 ──"))
   ok("超大输出落盘 KB + 取回指针", out.output.includes(".tsk/kb/k") && fs.readdirSync(ctxDir).some((f) => f.endsWith(".txt")))
@@ -198,7 +198,7 @@ console.log("== rtk 式逐命令压缩（ls / git status / test）==")
   // 对照：cat 普通大文件仍被压缩
   const out = { output: "y".repeat(3200) }
   await hooks["tool.execute.after"]({ tool: "bash", sessionID: "s1", callID: "c22", args: { command: "cat someBig.log" } }, out)
-  ok("读普通大文件仍压缩(不受影响)", out.output.includes("[TSK 沙箱") && out.output.length < 3200)
+  ok("读普通大文件仍压缩(不受影响)", out.output.includes("[TSK {bash}: 压 ") && out.output.length < 3200)
 }
 // —— B(context-mode 式)：大输出分节 + 章节地图 + 每节一文件可检索 ——
 {
