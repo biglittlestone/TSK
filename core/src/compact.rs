@@ -27,6 +27,101 @@ fn common_prefix(a: &[String]) -> String {
     for s in a { while !s.starts_with(&p) { p.pop(); } }
     p
 }
+fn strip_ansi(s: &str) -> String {
+    let re = Regex::new(r"\x1b\[[0-9;]*[A-Za-z]|[\x1b][()][0-9;]*[A-Za-z]|\x1b\]0;[^\x07]*\x07").unwrap();
+    re.replace_all(s, "").to_string()
+}
+
+// ---- Drain 式日志模板挖掘（借鉴 headroom LogTemplate）【实验特性，暂不入 deveco PR】----
+// 把「只有时间戳/ID/路径变化」的重复行折叠成 [模板: <TS> worker-<*> job <*>] (N 次) + 变体表。
+// 只折叠连续 run、保顺序；保守参数：min_run=3、相似度 0.4、至少 2 个常量 token。
+const LT_MIN_RUN: usize = 3;
+const LT_SIM: f32 = 0.4;
+const LT_MIN_CONST: usize = 2;
+
+struct LtRun {
+    indices: Vec<usize>,
+    /// Some(token)=该位置至今不变；None=已变化(通配 <*>)
+    template: Vec<Option<String>>,
+}
+
+fn lt_tokenize(line: &str) -> Vec<&str> { line.split_whitespace().collect() }
+
+/// 新行是否延续当前 run：token 数相同 + 匹配位置占比 ≥ 相似度阈值（含已有通配位）。
+fn lt_extends(run: &LtRun, tokens: &[&str]) -> bool {
+    if tokens.len() != run.template.len() { return false }
+    let len = tokens.len() as f32;
+    let matches: usize = tokens.iter().enumerate()
+        .map(|(i, t)| match &run.template[i] { Some(c) if c == t => 1, None => 1, _ => 0 })
+        .sum();
+    (matches as f32 / len) >= LT_SIM
+}
+
+/// 位置 token 与模板不同 → 变通配。
+fn lt_merge(template: &mut [Option<String>], tokens: &[&str]) {
+    for (i, t) in tokens.iter().enumerate() {
+        if let Some(c) = &template[i] { if c != t { template[i] = None } }
+    }
+}
+
+fn lt_flush(run: &LtRun, lines: &[&str], tokenized: &[Vec<&str>], tid: &mut usize, out: &mut String) {
+    let consts = run.template.iter().filter(|t| t.is_some()).count();
+    let varies = run.template.len() - consts;
+    let collapse = run.indices.len() >= LT_MIN_RUN && consts >= LT_MIN_CONST && varies > 0;
+    if !collapse {
+        for &i in &run.indices { out.push_str(lines[i]); out.push('\n'); }
+        return
+    }
+    // 模板头：[Template T<n>: TOKEN <*> TOKEN ...] (N occurrences)
+    out.push_str(&format!("[Template T{tid}: "));
+    *tid += 1;
+    for (i, slot) in run.template.iter().enumerate() {
+        if i > 0 { out.push(' ') }
+        match slot { Some(c) => out.push_str(c), None => out.push_str("<*>") }
+    }
+    out.push_str(&format!("] ({} occurrences)\n", run.indices.len()));
+    // 变体表：每行只输出变体位置的 token
+    for &i in &run.indices {
+        let toks = &tokenized[i];
+        let mut first = true;
+        for (pos, slot) in run.template.iter().enumerate() {
+            if slot.is_none() {
+                if !first { out.push(' ') }
+                out.push_str(toks[pos]);
+                first = false;
+            }
+        }
+        out.push('\n');
+    }
+}
+
+/// 日志模板挖掘（无损）：重复进度/日志行折叠为模板+变体表；空行/单行/不达标原样。
+pub fn log_template(text: &str) -> String {
+    if text.is_empty() { return String::new() }
+    let lines: Vec<&str> = text.lines().collect();
+    let tokenized: Vec<Vec<&str>> = lines.iter().map(|l| l.split_whitespace().collect()).collect();
+    let mut out = String::with_capacity(text.len());
+    let mut tid = 1usize;
+    let mut run: Option<LtRun> = None;
+    for (i, tokens) in tokenized.iter().enumerate() {
+        if tokens.is_empty() {
+            if let Some(r) = run.take() { lt_flush(&r, &lines, &tokenized, &mut tid, &mut out) }
+            out.push_str(lines[i]); out.push('\n');
+            continue
+        }
+        match run.as_mut() {
+            Some(r) if lt_extends(r, tokens) => { r.indices.push(i); lt_merge(&mut r.template, tokens) }
+            _ => {
+                if let Some(r) = run.take() { lt_flush(&r, &lines, &tokenized, &mut tid, &mut out) }
+                run = Some(LtRun { indices: vec![i], template: tokens.iter().map(|t| Some((*t).to_string())).collect() });
+            }
+        }
+    }
+    if let Some(r) = run.take() { lt_flush(&r, &lines, &tokenized, &mut tid, &mut out) }
+    // 防御：绝不比原文长（折叠未生效时回退原文）
+    if out.len() >= text.len() { return text.to_string() }
+    out
+}
 
 /// 按命令类型压缩（未识别返回 None → 调用方回退通用蒸馏）。输出格式与插件 v 版本一致。
 pub fn compact_by_command(cmd: &str, raw: &str) -> Option<String> {
@@ -131,10 +226,14 @@ pub fn compact_by_command(cmd: &str, raw: &str) -> Option<String> {
         let mut nmatches = 0usize;
         for l in &lines {
             if let Some(c) = re.captures(l) {
-                groups.entry(c[1].to_string()).or_default().push(format!("{}: {}", &c[2], &c[3]));
+                // 长命中行截断：行号保留用于定位，完整内容模型可 read/章节地图按需取回（降低回读）
+                let content = c[3].to_string();
+                let content = if content.chars().count() > 180 { format!("{}…", content.chars().take(180).collect::<String>()) } else { content };
+                groups.entry(c[1].to_string()).or_default().push(format!("{}: {}", &c[2], content));
                 nmatches += 1;
             } else {
-                groups.entry("(match)".to_string()).or_default().push(l.to_string());
+                let content = if l.chars().count() > 180 { format!("{}…", l.chars().take(180).collect::<String>()) } else { l.to_string() };
+                groups.entry("(match)".to_string()).or_default().push(content);
                 nmatches += 1;
             }
         }
@@ -191,15 +290,216 @@ pub fn compact_by_command(cmd: &str, raw: &str) -> Option<String> {
         let keep: Vec<String> = lines.iter().filter(|l| Regex::new(r"(?i)HTTP/|error|failed|cannot|resolve|100%|Saved to").unwrap().is_match(l)).map(|l| l.to_string()).collect();
         if !keep.is_empty() { return Some(keep.iter().rev().take(8).cloned().collect::<Vec<_>>().iter().rev().cloned().collect::<Vec<_>>().join("\n")) }
     }
+    // ---- devecocli docs：ArkUI API 文档 → 结构目录（标题/接口签名/参数名:类型） ----
+    // 文档正文/示例代码全丢，只留组件结构骨架——模型看目录即知有哪些接口/参数，细节按节 search 取回（0 回读常规问题）。
+    if is(cmd, "devecocli") && cmd.contains("docs") {
+        let re_title = Regex::new(r"^\s*(#{1,6})\s+\S").unwrap();
+        let re_sig = Regex::new(r"^[\w.]+\s*\(.*\)\s*$").unwrap();
+        let re_key = Regex::new(r"^\*\*[^*]+\*\*：").unwrap();
+        let mut keep: Vec<String> = Vec::new();
+        let mut in_code = false;
+        let mut n_titles = 0;
+        let mut n_sigs = 0;
+        let mut n_params = 0usize;
+        for l in &lines {
+            let t = l.trim();
+            if t.starts_with("```") { in_code = !in_code; continue }
+            if in_code { continue }
+            if t.starts_with("...output truncated") || t.starts_with("Full output saved") { continue }
+            if t.starts_with('|') {
+                // markdown 表格内 `\|` 是转义竖线（类型 union），先还原再按 `|` 分列
+                let cols: Vec<String> = t.replace("\\|", "|").split('|').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+                if cols.len() < 2 { continue }
+                let a = cols[0].clone();
+                // 表头行（第一列是列标签）与 `| --- |` 分隔行跳过
+                if a == "参数名" || a == "名称" || a.starts_with("---") { continue }
+                // 去掉最后一列（说明/正文），其余列拼成「参数名: 类型[| 更多类型][| 约束]」
+                let joined = cols[1..cols.len().saturating_sub(1)].join(" | ");
+                let btrunc = if joined.chars().count() > 80 { format!("{}…", joined.chars().take(80).collect::<String>()) } else { joined };
+                n_params += 1;
+                if n_params > CAP_LIST { continue } // 只显示前 N 参数，计数保留
+                keep.push(format!("{a}: {btrunc}"));
+                continue
+            }
+            if re_title.is_match(t) { n_titles += 1; keep.push(t.to_string()); continue }
+            if re_sig.is_match(t) { n_sigs += 1; keep.push(t.to_string()); continue }
+            if re_key.is_match(t) {
+                let trunc = t.chars().take(60).collect::<String>();
+                keep.push(if t.chars().count() > 60 { format!("{trunc}…") } else { t.to_string() });
+            }
+            // 其余 = 正文段落/说明 → 丢弃
+        }
+        if !keep.is_empty() {
+            let shown = keep.iter().take(60).cloned().collect::<Vec<_>>().join("\n");
+            let more = if keep.len() > 60 { format!("\n… +{} more", keep.len() - 60) } else { String::new() };
+            return Some(format!("devecocli docs ({n_titles} 标题, {n_sigs} 接口, {n_params} 参数)：\n{shown}{more}"));
+        }
+    }
+    // ---- PowerShell（Windows）：gci / gci -r / gps / sls / measure ----
+    // 输出为「表格 + ---- 分隔线 + 数据行」，命令名大小写不敏感。未列出的 PS 命令放行。
+    {
+        let l = cmd.to_lowercase();
+        let first = l.split_whitespace().next().unwrap_or("").to_string();
+        let is_ps = ["gci", "get-childitem", "gps", "get-process", "sls", "select-string", "measure-object", "measure", "dir"]
+            .iter().any(|c| c == &first)
+            || l.starts_with("get-") || l.starts_with("powershell") || l.starts_with("pwsh");
+        if is_ps {
+            // 1) Measure-Object：保留有值的统计行
+            if l.contains("measure-object") || first == "measure" {
+                let keep: Vec<String> = lines.iter()
+                    .filter(|x| Regex::new(r"^\s*(Count|Sum|Average|Maximum|Minimum)\s*:\s*\S").unwrap().is_match(x))
+                    .map(|x| x.trim().to_string()).collect();
+                if !keep.is_empty() { return Some(format!("Measure-Object:\n{}", head(&keep, CAP_LIST))) }
+            }
+            // 2) Get-Process / gps / ps：表头 + 前 N 数据行（跳分隔线）
+            if l.contains("get-process") || first == "gps" || first == "ps" {
+                let hi = lines.iter().position(|x| x.trim().starts_with("Id") || x.contains("ProcessName"));
+                let header = hi.map(|i| lines[i].clone()).unwrap_or_else(|| "PID ProcessName".to_string());
+                let rows: Vec<String> = (hi.map(|i| &lines[i + 1..]).unwrap_or(&lines[..]))
+                    .iter().filter(|x| !x.trim().starts_with('-') && !x.trim().is_empty())
+                    .map(|x| x.to_string()).collect();
+                let more = if rows.len() > CAP_LIST { format!("\n… +{} more", rows.len() - CAP_LIST) } else { String::new() };
+                return Some(format!("ps:\n{header}\n{}{}", head(&rows, CAP_LIST), more));
+            }
+            // 3) Get-ChildItem -Recurse：全路径列表（find 语义）
+            if l.contains("recurse") {
+                let paths: Vec<String> = lines.iter()
+                    .filter(|x| {
+                        let t = x.trim();
+                        !t.is_empty() && !t.starts_with('-') && !t.starts_with("FullName")
+                            && t.contains('\\') && t.starts_with('C')
+                    })
+                    .map(|x| x.trim().to_string())
+                    .collect();
+                if paths.len() > 1 {
+                    let h = head(&paths, CAP_LIST);
+                    let more = if paths.len() > CAP_LIST { format!("\n… +{} more paths", paths.len() - CAP_LIST) } else { String::new() };
+                    return Some(format!("{} files:\n{h}{more}", paths.len()));
+                }
+            }
+            // 4) Get-ChildItem / gci / dir：ls 语义（只保留 Mode 数据行，跳表头/分隔线/目录标题）
+            if l.contains("get-childitem") || first == "gci" || first == "dir" {
+                let names: Vec<String> = lines.iter()
+                    .filter_map(|x| {
+                        let t = x.trim();
+                        if Regex::new(r"^[d-][-arhsx]{5}").unwrap().is_match(t) {
+                            let last = t.split_whitespace().last().unwrap_or(t).to_string();
+                            Some(if t.starts_with('d') { format!("{last}/") } else { last })
+                        } else { None }
+                    })
+                    .collect();
+                let dirs = names.iter().filter(|n| n.ends_with('/')).count();
+                let files = names.len() - dirs;
+                if names.len() > 1 || dirs > 0 {
+                    let shown = names.iter().take(CAP_LIST).cloned().collect::<Vec<_>>().join("\n");
+                    let more = if names.len() > CAP_LIST { format!("\n… +{} more", names.len() - CAP_LIST) } else { String::new() };
+                    let dd = if dirs == 1 { "" } else { "s" };
+                    let ff = if files == 1 { "" } else { "s" };
+                    return Some(format!("{dirs} dir{dd}, {files} file{ff}:\n{shown}{more}"));
+                }
+            }
+            // 5) Select-String / sls：grep 语义（行号 + 内容）
+            if l.contains("select-string") || first == "sls" {
+                let rows: Vec<String> = lines.iter()
+                    .filter(|x| !x.trim().is_empty() && !x.trim().starts_with('-') && !x.contains("IgnoreCase"))
+                    .map(|x| x.trim().to_string()).collect();
+                if !rows.is_empty() {
+                    let h = head(&rows, CAP_LIST);
+                    let more = if rows.len() > CAP_LIST { format!("\n… +{} more matches", rows.len() - CAP_LIST) } else { String::new() };
+                    return Some(format!("grep ({} matches):\n{h}{more}", rows.len()));
+                }
+            }
+            // Get-Content / gc：cat 语义 → 走下方 cat 大输出分支
+        }
+    }
+    // ---- cat / gc（读文件大输出）：日志先 Drain 模板折叠（无损，实验特性）；JSON 提取键；否则保留头尾 ----
+    // 尽量降低回读：日志折叠保留全部语义（模板+变体表可重建），JSON 键/头尾给结构；深挖走章节地图。
+    if (is(cmd, "cat") || is(cmd, "gc")) && raw.chars().count() > 2000 {
+        // 日志类（非 JSON：`{` 对象或 `[{` 数组才算 JSON；`[时间戳]` 是日志）：重复行模板化（Drain，无损）
+        let t0 = raw.trim_start();
+        if !t0.starts_with('{') && !t0.starts_with("[{") && !t0.starts_with("[ {") {
+            let folded = log_template(raw);
+            if folded.len() < raw.len() && folded.contains("[Template T") {
+                return Some(format!("cat ({} B, 日志模板折叠):\n{}", raw.len(), folded));
+            }
+        }
+        let h = raw.chars().take(400).collect::<String>();
+        let t = raw.chars().rev().take(400).collect::<String>().chars().rev().collect::<String>();
+        let keyline = if raw.trim_start().starts_with('{') {
+            let mut keys: Vec<String> = Regex::new(r#""([A-Za-z0-9_]+)"\s*:"#).unwrap()
+                .captures_iter(raw).filter_map(|c| c.get(1).map(|m| m.as_str().to_string())).collect();
+            keys.sort(); keys.dedup();
+            if keys.is_empty() { String::new() } else { format!("\nJSON 键 ({}): {}", keys.len().min(40), keys.iter().take(40).cloned().collect::<Vec<_>>().join(" ")) }
+        } else { String::new() };
+        return Some(format!("cat ({} B)：\n头部:\n{h}\n…\n尾部:\n{t}{keyline}", raw.len()));
+    }
+    // ---- hvigor 构建日志（export … && node … 输出）：保留 BUILD 结论 + 错误行 + 步数 ----
+    // 构建结论在尾部（BUILD SUCCESSFUL/FAILED）+ 错误行 → 模型完成构建确认/排查 0 回读；深挖堆栈走章节地图。
+    if raw.contains("hvigor") && (raw.contains("BUILD SUCCESSFUL") || raw.contains("BUILD FAILED") || raw.contains("Finished :entry")) {
+        let status: Vec<String> = lines.iter()
+            .filter(|l| l.contains("hvigor") || l.contains("BUILD ") || l.contains("Finished :entry") || l.contains("UP-TO-DATE"))
+            .map(|l| strip_ansi(l)).collect();
+        let fails: Vec<String> = lines.iter()
+            .filter(|l| {
+                let s = strip_ansi(l);
+                s.contains("ERROR") || s.contains("FAILED") || s.contains("Exception") || s.contains("error:") || s.contains("WARN:")
+            })
+            .map(|l| strip_ansi(l)).collect();
+        if !status.is_empty() {
+            // 构建结论在尾部（BUILD SUCCESSFUL/FAILED）+ 错误行 → 模型完成构建确认/排查 0 回读
+            let tail_status: Vec<String> = status.iter().rev().take(6).cloned().collect::<Vec<_>>().iter().rev().cloned().collect();
+            let fails_shown = if fails.is_empty() { String::new() } else { format!("\nfailures:\n{}", fails.iter().take(CAP_ERR).cloned().collect::<Vec<_>>().join("\n")) };
+            return Some(format!("hvigor build ({} 步, {} 错误):\n{}{}", status.len(), fails.len(), tail_status.join("\n"), fails_shown));
+        }
+    }
     // ---- 测试/构建 ----
     if ["vitest", "jest", "mocha", "phpunit", "pytest", "ctest", "golangci"].iter().any(|s| cmd.contains(s))
-        || (cmd.contains("test") && Regex::new(r"(?i)(pass|fail|✓|✗|✖|Tests:|Suites:)|failed").unwrap().is_match(raw)) {
-        let summary: Vec<String> = lines.iter().filter(|l| Regex::new(r"(?i)(Tests:|test suites|passed|failed|✓ \d|✗ \d)").unwrap().is_match(l)).take(4).map(|l| l.to_string()).collect();
+        || (cmd.contains("test") && Regex::new(r"(?i)(pass|fail|✓|✗|✖|Tests:|Suites:)|failed").unwrap().is_match(raw))
+        || Regex::new(r"BUILD (SUCCESSFUL|FAILED)").unwrap().is_match(raw) {
+        let summary: Vec<String> = lines.iter().filter(|l| Regex::new(r"(?i)(Tests:|test suites|passed|failed|✓ \d|✗ \d|BUILD (SUCCESSFUL|FAILED))").unwrap().is_match(l)).take(4).map(|l| l.to_string()).collect();
         let fails: Vec<String> = lines.iter().filter(|l| Regex::new(r"(?i)✖|✗|×|FAIL|failed|Error:|\berror\b").unwrap().is_match(l)).take(CAP_ERR).map(|l| l.to_string()).collect();
         let mut parts = Vec::new();
         if !summary.is_empty() { parts.push(summary.join("\n")) }
         if !fails.is_empty() { parts.push(format!("failures ({} shown):\n{}", fails.len(), fails.join("\n"))) }
         if !parts.is_empty() { return Some(parts.join("\n\n")) }
+    }
+    // ---- JSON 数组统计压缩（借鉴 headroom SmartCrusher 精髓）【实验特性，暂不入 deveco PR】----
+    // 工具输出是 JSON 数组（≥5 项 dict）时：常量字段只输出一次，变化字段保留唯一值（去重）。
+    // 保守：常量率 ≥0.2 才压；压缩后不短于原文则回退（与 headroom 的「安全粉碎」一致）。
+    if raw.trim_start().starts_with('[') {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(raw.trim_start()) {
+            if let Some(items) = v.as_array() {
+                if items.len() >= 5 && items.iter().all(|x| x.is_object()) {
+                    // 字段并集（BTreeSet → 排序确定性，同 headroom）
+                    let mut keys: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+                    for it in items { if let Some(o) = it.as_object() { for k in o.keys() { keys.insert(k.clone()); } } }
+                    // 字段统计：常量字段 / 变化字段唯一值
+                    let mut const_fields: Vec<(String, String)> = Vec::new();
+                    let mut var_fields: Vec<(String, Vec<String>)> = Vec::new();
+                    for k in &keys {
+                        let vals: Vec<String> = items.iter().filter_map(|it| it.get(k))
+                            .filter_map(|x| x.as_str().map(|s| s.to_string()).or_else(|| Some(x.to_string()))).collect();
+                        let all_same = !vals.is_empty() && vals.len() == items.len() && vals.iter().all(|v| v == &vals[0]);
+                        if all_same {
+                            const_fields.push((k.clone(), vals[0].clone()));
+                        } else {
+                            let mut uniq = vals.clone(); uniq.sort(); uniq.dedup();
+                            var_fields.push((k.clone(), uniq));
+                        }
+                    }
+                    let const_ratio = const_fields.len() as f64 / keys.len().max(1) as f64;
+                    if const_ratio >= 0.2 {
+                        let mut out = format!("JSON 数组 ({} 项, {} 字段, 常量 {}):\n", items.len(), keys.len(), const_fields.len());
+                        for (k, val) in &const_fields { out.push_str(&format!("  {k}: {val}\n")); }
+                        for (k, uniq) in &var_fields {
+                            if uniq.len() <= 5 { out.push_str(&format!("  {k}: {}\n", uniq.join(" | "))) }
+                            else { out.push_str(&format!("  {k}: {} 唯一值 (前5): {}\n", uniq.len(), uniq[..5].join(" | "))) }
+                        }
+                        if out.len() < raw.len() { return Some(out) }
+                    }
+                }
+            }
+        }
     }
     None
 }
@@ -239,9 +539,113 @@ mod t {
         assert!(out.contains("公共前缀\"common/dir/\"") && !out.contains("common/dir/a.ts") && out.contains("a.ts"), "got: {out}");
     }
     #[test]
+    fn pwsh_gci_ls_shaped() {
+        let raw = "    目录: C:\\Windows\\System32\\drivers\n\nMode  LastWriteTime  Length Name\n----  -------------  ------ ----\nd-----  2026/6/25  9:41         DriverData\n-a----  2026/6/25  9:33  294912 1394ohci.sys\n-a----  2026/6/25  9:30  108464 3ware.sys";
+        let out = compact_by_command("Get-ChildItem C:\\Windows", &raw).unwrap();
+        assert!(out.contains("1 dir, 2 files:"), "got: {out}");
+        assert!(out.contains("DriverData/") && out.contains("1394ohci.sys"), "got: {out}");
+        assert!(!out.contains("294912"), "丢时间戳/大小: {out}");
+    }
+    #[test]
+    fn pwsh_measure_shaped() {
+        let raw = "Count    : 475\nAverage  :\nSum      : 12345\nMaximum  : 999\nMinimum  :";
+        let out = compact_by_command("Measure-Object", &raw).unwrap();
+        assert!(out.contains("Count") && out.contains("Sum") && out.contains("Maximum"), "got: {out}");
+        assert!(!out.contains("Average"), "无值统计行丢弃: {out}");
+    }
+    #[test]
+    fn pwsh_gps_shaped() {
+        let raw = "   Id ProcessName      CPU         WorkingSet64\n   -- -----------      ---         ------------\n 8004 AggregatorHost  1038.953125  15106048\n16364 aha_doctor        47.03125    40550400";
+        let out = compact_by_command("Get-Process | Select-Object -First 10", &raw).unwrap();
+        assert!(out.contains("ProcessName") && out.contains("AggregatorHost"), "got: {out}");
+        assert!(out.contains("aha_doctor"), "got: {out}");
+    }
+    #[test]
+    fn cat_json_keeps_keys() {
+        let raw = format!("{{\"apiVersion\":\"24\",\"displayName\":\"Ets\",\"meta\":{{\"metaVersion\":\"3.0.0\"}},\"pad\":\"{}\"}}", "p".repeat(3000));
+        let out = compact_by_command("cat oh-units.json", &raw).unwrap();
+        assert!(out.contains("JSON 键") && out.contains("apiVersion") && out.contains("displayName"), "got: {out}");
+        assert!(out.starts_with("cat ("), "got: {out}");
+    }
+    #[test]
+    fn hvigor_build_keeps_conclusion() {
+        let raw = "> hvigor Finished :entry:clean... after 1 ms\n> hvigor Finished :entry:assembleHap... after 1 ms\n> hvigor BUILD FAILED in 2 s\n* Try: Run with --stacktrace\nERROR: Cannot resolve module";
+        let out = compact_by_command("export DEVECO_SDK_HOME=x && node build.js", &raw).unwrap();
+        assert!(out.contains("BUILD FAILED"), "结论保留: {out}");
+        assert!(out.contains("ERROR"), "错误行保留: {out}");
+        assert!(out.contains("hvigor build ("), "got: {out}");
+    }
+    #[test]
+    fn npm_build_success_summary() {
+        let raw = "step-0000 init\nstep-0001 compile\nBUILD SUCCESSFUL in 3 s 911 ms";
+        let out = compact_by_command("npm run build", &raw).unwrap();
+        assert!(out.contains("BUILD SUCCESSFUL"), "结论保留: {out}");
+        assert!(!out.contains("step-0000"), "进度噪音丢弃: {out}");
+    }
+    #[test]
+    fn npm_build_failed_errors() {
+        let raw = "step-0000 compile\nERROR: Cannot resolve module x\nBUILD FAILED in 2 s";
+        let out = compact_by_command("npm run build", &raw).unwrap();
+        assert!(out.contains("BUILD FAILED") && out.contains("ERROR"), "got: {out}");
+    }
+    #[test]
+    fn log_template_collapses_repeats_lossless() {
+        // 常量占比高 + N 大 → 模板头摊销后折叠才省（与 headroom 一致；变体多的短样例会回退）
+        let raw = mk(10, &|i| format!("2025-01-15T12:34:{:02} INFO worker-{} processing job {}", 56 + i, i + 1, 42 + i));
+        let raw = format!("{raw}\nBUILD DONE");
+        let out = log_template(&raw);
+        assert!(out.contains("[Template T1:"), "模板头: {out}");
+        assert!(out.contains("<*>"), "通配: {out}");
+        assert!(out.contains("(10 occurrences)"), "计数: {out}");
+        assert!(out.contains("BUILD DONE"), "结论原样: {out}");
+        assert!(out.contains("worker-1") && out.contains("worker-10"), "变体表含全部行: {out}");
+    }
+    #[test]
+    fn log_template_conservative_when_not_enough_repeats() {
+        let raw = "line one\nline two\nline three\nBUILD DONE";
+        let out = log_template(raw);
+        assert!(!out.contains("[Template"), "少重复不折叠: {out}");
+        assert!(out == raw, "原样返回: {out}");
+    }
+    #[test]
+    fn json_array_const_field_fold() {
+        let raw = format!("[{{\"name\":\"a\",\"status\":\"ok\",\"v\":{}}},{{\"name\":\"b\",\"status\":\"ok\",\"v\":{}}},{{\"name\":\"c\",\"status\":\"ok\",\"v\":{}}},{{\"name\":\"d\",\"status\":\"ok\",\"v\":{}}},{{\"name\":\"e\",\"status\":\"ok\",\"v\":{}}}]", 1, 2, 3, 4, 5);
+        let out = compact_by_command("curl -s API", &raw).unwrap();
+        assert!(out.contains("JSON 数组"), "got: {out}");
+        assert!(out.contains("status: ok"), "常量字段折叠: {out}");
+        assert!(out.contains("name: a | b | c | d | e"), "唯一值: {out}");
+    }
+    #[test]
+    fn json_array_not_crushable_passes() {
+        // 无常量字段（全变化）→ 不压缩，放行
+        let raw = format!("[{{\"n\":\"a\"}},{{\"n\":\"b\"}},{{\"n\":\"c\"}},{{\"n\":\"d\"}},{{\"n\":\"e\"}},{{\"n\":\"f\"}},{{\"n\":\"g\"}}]");
+        let out = compact_by_command("node script.js", &raw);
+        assert!(out.is_none(), "全变化字段不压: {out:?}");
+    }
+    #[test]
     fn test_report_shaped() {
         let raw = format!("RUN\nt... Tests 0 passed | 40 failed (40)\n{}", mk(40, &|i| format!("✗ t{i}.test.ts > case\n  AssertionError")));
         let out = compact_by_command("npx vitest run", &raw).unwrap();
         assert!(out.contains("Tests") && out.contains("failures (20 shown):"), "got: {out}");
+    }
+    #[test]
+    fn devecocli_docs_keeps_structure() {
+        let raw = "#### 接口\nTextPicker(options?: TextPickerOptions)\n根据指定的数据列表创建文本选择器。\n**元服务API：** 从API version 11开始，该接口支持在元服务中使用。\n| 参数名 | 类型 | 必填 | 说明 |\n| --- | --- | --- | --- |\n| options | TextPickerOptions | 否 | 配置文本选择器的参数。 |\n| range | string[] | 否 | 选择器的数据选择列表。 |\n```\nconst a = 1;\n```\n正文段落应被丢弃";
+        let out = compact_by_command("devecocli docs read API/TextPicker", &raw).unwrap();
+        assert!(out.contains("#### 接口"), "标题保留: {out}");
+        assert!(out.contains("TextPicker(options?: TextPickerOptions)"), "接口签名保留: {out}");
+        assert!(out.contains("options: TextPickerOptions"), "参数名:类型保留: {out}");
+        assert!(out.contains("range: string[]"), "参数名:类型保留: {out}");
+        assert!(!out.contains("配置文本选择器"), "说明列丢弃: {out}");
+        assert!(!out.contains("const a"), "代码块丢弃: {out}");
+        assert!(!out.contains("正文段落"), "正文丢弃: {out}");
+        assert!(out.contains("1 标题, 1 接口, 2 参数"), "计数: {out}");
+    }
+    #[test]
+    fn devecocli_long_type_truncated() {
+        let raw = "#### 属性\n| 名称 | 类型 | 只读 | 可选 | 说明 |\n| --- | --- | --- | --- | --- |\n| range | string[] | string[][]10+ | Resource | TextPickerRangeContent[] | 选择列表。 |";
+        let out = compact_by_command("devecocli docs read X", &raw).unwrap();
+        assert!(out.contains("range: string[] | string[][]10+ | Resource"), "类型 union 保留: {out}");
+        assert!(!out.contains("选择列表"), "说明丢弃: {out}");
     }
 }
