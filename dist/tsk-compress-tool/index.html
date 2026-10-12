@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TSK 输出压缩器 · 试算台</title>
+<style>
+  :root { --bg:#f6f8fa; --card:#fff; --line:#e1e4e8; --fg:#24292f; --muted:#57606a; --accent:#2da44e; --code:#f6f8fa; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; background: var(--bg); color: var(--fg); margin: 0; padding: 24px; }
+  .wrap { max-width: 960px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin: 0 0 20px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 800px) { .grid { grid-template-columns: 1fr; } }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 14px; }
+  .card h2 { font-size: 13px; margin: 0 0 8px; color: var(--muted); font-weight: 600; }
+  label { font-size: 12px; color: var(--muted); display: block; margin: 8px 0 4px; }
+  input[type=text], textarea { width: 100%; border: 1px solid var(--line); border-radius: 6px; padding: 8px; font-size: 13px; font-family: Consolas, Menlo, monospace; background: #fff; }
+  textarea { height: 320px; resize: vertical; }
+  button { margin-top: 10px; background: var(--accent); color: #fff; border: 0; border-radius: 6px; padding: 8px 18px; font-size: 14px; cursor: pointer; }
+  button:hover { opacity: .9; }
+  .stats { display: flex; gap: 12px; margin: 0 0 8px; font-size: 12px; flex-wrap: wrap; }
+  .stat { background: var(--code); border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; }
+  .stat b { color: var(--accent); }
+  .ratio { background: #dafbe1; border: 1px solid #7ee787; }
+  .ratio b { color: #1a7f37; }
+  pre { margin: 0; background: var(--code); border: 1px solid var(--line); border-radius: 6px; padding: 10px; font-size: 12.5px; white-space: pre-wrap; word-break: break-all; max-height: 400px; overflow: auto; min-height: 120px; }
+  .pass { color: #1a7f37; }
+  .miss { color: #cf222e; }
+  .btn-row { display: flex; gap: 8px; align-items: center; }
+  .copy { background: #e6edf3; color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; font-size: 12px; cursor: pointer; }
+  .foot { margin-top: 16px; color: var(--muted); font-size: 12px; line-height: 1.6; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>TSK 输出压缩器 · 试算台</h1>
+  <p class="sub">与 TSK 共享核心引擎同一套规则（ls / git / grep / find / wc / du / df / ps / devecocli docs / 测试…）。未识别命令原样放行。</p>
+  <div class="grid">
+    <div class="card">
+      <h2>输入</h2>
+      <label>选择命令（自动填入命令与示例）</label>
+      <select id="cmdSelect" onchange="pickCmd()">
+        <option value="">— 选择支持的命令（选中后自动填带参数的示例） —</option>
+        <option value="git-log">git log</option>
+        <option value="git-diff">git diff</option>
+        <option value="git-status">git status</option>
+        <option value="ls">ls</option>
+        <option value="find">find</option>
+        <option value="grep">grep</option>
+        <option value="wc">wc</option>
+        <option value="du">du</option>
+        <option value="df">df</option>
+        <option value="ps">ps</option>
+        <option value="curl">curl</option>
+        <option value="devecocli">devecocli</option>
+        <option value="vitest">vitest</option>
+      </select>
+      <label>命令名（或手动输入）</label>
+      <input type="text" id="cmd" placeholder="git log --stat" value="git log --stat">
+      <label>压缩前内容（大工具输出原文）</label>
+      <textarea id="raw" placeholder="粘贴命令输出原文…"></textarea>
+      <div class="btn-row">
+        <button onclick="run()">压缩</button>
+        <button class="copy" onclick="loadSample()">加载示例</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2>输出</h2>
+      <div class="stats" id="stats"></div>
+      <pre id="out" class="miss">（未执行）</pre>
+      <div class="btn-row">
+        <button class="copy" onclick="copyOut()">复制结果</button>
+      </div>
+    </div>
+  </div>
+  <div class="foot">
+    用上方<b>下拉框</b>可直接选择支持的命令并载入示例，或手动输入命令名。压缩规则与 Rust 共享核心 <code>tsk compress</code> 一致，支持：ls/tree · find · git status/log/diff/show · grep/rg · wc · du · df · ps · curl/wget · devecocli docs · 测试/构建（失败上限 20）。DevEco 插件对 ≤1600 字符输出放行；本试算台直接计算任意输入的压缩结果。
+  </div>
+</div>
+
+<script>
+// ============ TSK 压缩引擎（JS 移植，与 core/src/compact.rs 逐行一致）============
+const CAP_LIST = 20, CAP_ERR = 20;
+function is(cmd, c) {
+  const esc = c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp("(^|[\\s/:])" + esc + "( ?|$)").test(cmd);
+}
+function linesOf(raw) {
+  return raw.split("\n").map(l => l.replace(/\s+$/, "")).filter(l => l.trim() !== "");
+}
+function head(a, n) {
+  const shown = a.slice(0, n).join("\n");
+  return a.length > n ? shown + "\n… +" + (a.length - n) + " more" : shown;
+}
+function commonPrefix(a) {
+  if (!a.length) return "";
+  let p = a[0];
+  for (const s of a) while (!s.startsWith(p)) p = p.slice(0, -1);
+  return p;
+}
+function compactByCommand(cmd, raw) {
+  const lines = linesOf(raw);
+  // ---- ls / tree ----
+  if (is(cmd, "ls") || is(cmd, "tree")) {
+    const names = lines
+      .filter(l => !l.startsWith("total "))
+      .filter(l => !(l.trim().startsWith("./") && l.trim().endsWith(":")))
+      .map(l => {
+        if (/^[bcdlps-][rwx-]{9}/.test(l)) {
+          const last = l.split(/\s+/).pop();
+          return l.startsWith("d") ? last + "/" : last;
+        }
+        return l;
+      })
+      .filter(n => n.trim().replace(/\/+$/, "") !== "." && n.trim().replace(/\/+$/, "") !== "..");
+    const dirs = names.filter(n => n.endsWith("/")).length;
+    const files = names.length - dirs;
+    const shown = names.slice(0, CAP_LIST).join("\n");
+    const more = names.length > CAP_LIST ? "\n… +" + (names.length - CAP_LIST) + " more" : "";
+    return dirs + " dir" + (dirs === 1 ? "" : "s") + ", " + files + " file" + (files === 1 ? "" : "s") + ":\n" + shown + more;
+  }
+  // ---- find ----
+  if (is(cmd, "find")) {
+    const paths = lines.filter(l => !l.includes("Permission denied") && !l.startsWith("find:"));
+    const files2 = paths.map(l => l.trim().replace(/\/+$/, ""));
+    const dirs = paths.filter(l => l.endsWith("/")).length;
+    const h = head(files2, CAP_LIST);
+    const more = files2.length > CAP_LIST ? "\n… +" + (files2.length - CAP_LIST) + " more paths" : "";
+    return dirs + " dirs, " + (files2.length - dirs) + " files:\n" + h + more;
+  }
+  // ---- git status ----
+  if (is(cmd, "git") && cmd.includes("status")) {
+    const groups = new Map();
+    const re = /^([MADRCU?! ]{2}|[ MADRCU?]) ?(.*)$/;
+    for (const l of lines) {
+      const m = l.match(re);
+      if (m) {
+        let st = m[1].replace(/ /g, "");
+        if (st === "") st = "?";
+        if (!groups.has(st)) groups.set(st, []);
+        groups.get(st).push(m[2].trim());
+      }
+    }
+    if (groups.size === 0) return raw.trim().slice(0, 800);
+    const rows = [...groups.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1))
+      .map(([st, fs]) => st + " (" + fs.length + "):\n" + head(fs, CAP_LIST));
+    return "git status (" + Math.max(lines.length - 1, 1) + " 行)：\n" + rows.join("\n");
+  }
+  // ---- git log / show ----
+  if (is(cmd, "git") && (cmd.includes("log") || cmd.includes("show"))) {
+    const re = /^commit ([0-9a-f]{7,40})/i;
+    const commits = [];
+    for (let i = 0; i < lines.length; i++) {
+      const m = lines[i].match(re);
+      if (m) {
+        let subject = "";
+        for (let j = i + 1; j < Math.min(i + 13, lines.length); j++) {
+          const t = lines[j].trim();
+          if (t === "") continue;
+          if (/^(Author|Date|Merge|Signed-off|commit )/.test(t)) continue;
+          subject = t; break;
+        }
+        commits.push(m[1].slice(0, 12) + " " + subject);
+      }
+    }
+    if (commits.length) return commits.length + " commits:\n" + head(commits, CAP_LIST);
+  }
+  // ---- git diff / show ----
+  if (is(cmd, "git") && (cmd.includes("diff") || cmd.includes("show"))) {
+    const freq = /^diff --git a\/(\S+)(?: b\/(\S+))?$/;
+    const hunk = /^@@ -(\d+(?:,\d+)?) \+(\d+(?:,\d+)?) @@(.*)$/;
+    const files = [], hunks = [];
+    for (const l of lines) {
+      const mf = l.match(freq);
+      if (mf) {
+        const a = mf[1], b = mf[2];
+        if (b !== undefined && b !== a) { files.push(a + " → " + b); continue; }
+        files.push(a);
+      } else {
+        const mh = l.match(hunk);
+        if (mh) {
+          const tail = (mh[3] || "").trim();
+          hunks.push("@@ -" + mh[1] + " +" + mh[2] + " @@" + (tail ? " " + tail : ""));
+        }
+      }
+    }
+    const parts = [];
+    if (files.length) parts.push(files.length + " files:\n" + head(files, CAP_LIST));
+    if (hunks.length) parts.push(hunks.length + " hunks:\n" + hunks.slice(0, CAP_ERR).join("\n"));
+    if (parts.length) return parts.join("\n\n");
+  }
+  // ---- grep / rg ----
+  if (is(cmd, "grep") || is(cmd, "rg")) {
+    const re = /^([^:]+):(\d+):(.*)$/;
+    const groups = new Map();
+    let nmatches = 0;
+    for (const l of lines) {
+      const m = l.match(re);
+      if (m) {
+        if (!groups.has(m[1])) groups.set(m[1], []);
+        groups.get(m[1]).push(m[2] + ": " + m[3]);
+        nmatches++;
+      } else {
+        if (!groups.has("(match)")) groups.set("(match)", []);
+        groups.get("(match)").push(l);
+        nmatches++;
+      }
+    }
+    if (groups.size) {
+      const parts = [];
+      let shownFiles = 0;
+      for (const [f, rows] of [...groups.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)).slice(0, CAP_LIST)) {
+        const shownRows = rows.slice(0, 5).map(r => "  " + r);
+        const extra = rows.length > 5 ? "\n  … +" + (rows.length - 5) + " rows" : "";
+        parts.push(f + " (" + rows.length + "):\n" + shownRows.join("\n") + extra);
+        shownFiles++;
+      }
+      if (groups.size > shownFiles) parts.push("… +" + (groups.size - shownFiles) + " files");
+      return "grep (" + groups.size + " files, " + nmatches + " matches):\n" + parts.join("\n");
+    }
+  }
+  // ---- wc ----
+  if (is(cmd, "wc")) {
+    const rows = lines.map(l => l.split(/\s+/).filter(s => s !== "")).filter(r => r.length >= 2);
+    const filesR = rows.filter(r => r[r.length - 1] !== "total");
+    if (rows.length && filesR.length) {
+      const paths = filesR.map(r => r[r.length - 1]);
+      const prefix = paths.length > 1 ? commonPrefix(paths) : "";
+      const shown = filesR.map(r => r.slice(0, -1).join(" ") + " " + r[r.length - 1].slice(prefix.length));
+      let out = "wc (" + filesR.length + " 项，公共前缀\"" + prefix + "\"已剥)：\n" + head(shown, CAP_LIST);
+      const t = rows.find(r => r[r.length - 1] === "total");
+      if (t) out += "\n" + t.join(" ");
+      return out;
+    }
+  }
+  // ---- du ----
+  if (is(cmd, "du")) {
+    const total = lines.find(l => l.endsWith("total"));
+    const rows = lines.filter(l => !l.endsWith("total"));
+    if (rows.length) return "du (" + rows.length + " 项):\n" + head(rows, CAP_LIST) + (total ? "\ntotal: " + total : "");
+  }
+  // ---- df ----
+  if (is(cmd, "df")) {
+    if (lines.length) {
+      const rows = lines.slice(1);
+      const extra = rows.length > CAP_LIST ? "\n… +" + (rows.length - CAP_LIST) + " more" : "";
+      return "df:\n" + lines[0] + "\n" + head(rows, CAP_LIST) + extra;
+    }
+  }
+  // ---- ps ----
+  if (is(cmd, "ps")) {
+    const hi = lines.findIndex(l => l.startsWith("PID") || l.startsWith("UID") || l.startsWith("USER"));
+    const header = hi >= 0 ? lines[hi] : (lines[0] || "");
+    const rows = hi >= 0 ? lines.slice(hi + 1) : lines.slice(1);
+    const more = rows.length > CAP_LIST ? "\n… +" + (rows.length - CAP_LIST) + " more" : "";
+    return "ps:\n" + header + "\n" + head(rows, CAP_LIST) + more;
+  }
+  // ---- curl / wget ----
+  if (is(cmd, "curl") || is(cmd, "wget")) {
+    const keep = lines.filter(l => /HTTP\/|error|failed|cannot|resolve|100%|Saved to/i.test(l));
+    if (keep.length) return keep.slice(-8).join("\n");
+  }
+  // ---- devecocli docs ----
+  if (is(cmd, "devecocli") && cmd.includes("docs")) {
+    const reTitle = /^\s*(#{1,6})\s+\S/;
+    const reSig = /^[\w.]+\s*\(.*\)\s*$/;
+    const reKey = /^\*\*[^*]+\*\*：/;
+    let keep = [], inCode = false, nTitles = 0, nSigs = 0, nParams = 0;
+    for (const l of lines) {
+      const t = l.trim();
+      if (t.startsWith("```")) { inCode = !inCode; continue; }
+      if (inCode) continue;
+      if (t.startsWith("...output truncated") || t.startsWith("Full output saved")) continue;
+      if (t.startsWith("|")) {
+        const cols = t.replace(/\\\|/g, "|").split("|").map(s => s.trim()).filter(s => s !== "");
+        if (cols.length < 2) continue;
+        const a = cols[0];
+        if (a === "参数名" || a === "名称" || a.startsWith("---")) continue;
+        const joined = cols.slice(1, Math.max(1, cols.length - 1)).join(" | ");
+        const btrunc = [...joined].length > 80 ? [...joined].slice(0, 80).join("") + "…" : joined;
+        nParams++;
+        if (nParams > CAP_LIST) continue;
+        keep.push(a + ": " + btrunc);
+        continue;
+      }
+      if (reTitle.test(t)) { nTitles++; keep.push(t); continue; }
+      if (reSig.test(t)) { nSigs++; keep.push(t); continue; }
+      if (reKey.test(t)) {
+        const trunc = [...t].slice(0, 60).join("");
+        keep.push([...t].length > 60 ? trunc + "…" : t);
+      }
+    }
+    if (keep.length) {
+      const shown = keep.slice(0, 60).join("\n");
+      const more = keep.length > 60 ? "\n… +" + (keep.length - 60) + " more" : "";
+      return "devecocli docs (" + nTitles + " 标题, " + nSigs + " 接口, " + nParams + " 参数)：\n" + shown + more;
+    }
+  }
+  // ---- 测试 / 构建 ----
+  const testEngines = ["vitest", "jest", "mocha", "phpunit", "pytest", "ctest", "golangci"];
+  if (testEngines.some(s => cmd.includes(s)) || (cmd.includes("test") && /(pass|fail|✓|✗|✖|Tests:|Suites:)|failed/i.test(raw))) {
+    const summary = lines.filter(l => /(Tests:|test suites|passed|failed|✓ \d|✗ \d)/i.test(l)).slice(0, 4);
+    const fails = lines.filter(l => /✖|✗|×|FAIL|failed|Error:|\berror\b/i.test(l)).slice(0, CAP_ERR);
+    const parts = [];
+    if (summary.length) parts.push(summary.join("\n"));
+    if (fails.length) parts.push("failures (" + fails.length + " shown):\n" + fails.join("\n"));
+    if (parts.length) return parts.join("\n\n");
+  }
+  return null; // 未识别 → 放行
+}
+// ============ TSK 包裹（与 deveco 插件 tool.execute.after 一致）============
+function ansiStrip(s) { return s.replace(/\u001b\[[0-9;]*[A-Za-z]|[\u001b][()][0-9;]*[A-Za-z]|\[2K|\r/g, ""); }
+function kbid(raw) { let h = 0; for (let i = 0; i < raw.length; i++) h = (h * 31 + raw.charCodeAt(i)) | 0; return "k" + ((h >>> 0).toString(16)); }
+const MAX_SECTIONS = 64;
+function sectionize(raw) {
+  const blank = raw.split(/\n\s*\n/);
+  const usable = blank.map(s => s.trim()).filter(s => s.length > 0);
+  if (usable.length >= 2 && usable.length <= MAX_SECTIONS) return usable.map((s, i) => ({ title: (s.split("\n")[0] || "Section " + (i + 1)).slice(0, 40), content: s }));
+  const L = ansiStrip(raw).split("\n").map(l => l.trim()).filter(l => l);
+  const chunks = []; const per = 60;
+  for (let i = 0; i < L.length && chunks.length < MAX_SECTIONS; i += per) { const slice = L.slice(i, i + per); chunks.push({ title: "Lines " + (i + 1) + "-" + (i + slice.length), content: slice.join("\n") }); }
+  return chunks;
+}
+// 组装插件同款包裹输出：header + 全文指针 + 压缩正文 + 章节地图
+function wrapOutput(cmd, raw, compact) {
+  const kbId = kbid(raw);
+  const hdr = "[TSK {bash}: 压 " + raw.length + "B→" + compact.length + "B]";
+  const retr = "\n全文: <.../.tsk/kb/" + kbId + ".txt> (cat 直通；tsk search \"<关键词>\" 精取)";
+  let sectionMap = "";
+  if (raw.length > 5 * 1024) {
+    const secs = sectionize(raw);
+    if (secs.length > 1) {
+      const titles = secs.map(s => s.title);
+      sectionMap = "\n§ 章节(" + titles.length + ")：" + titles.slice(0, 12).join(" | ") + (titles.length > 12 ? " | …+" + (titles.length - 12) : "") + "\n§ 取某节：tsk search \"<章节标题关键词>\" 精确取回。";
+    }
+  }
+  return hdr + retr + "\n" + compact + sectionMap;
+}
+
+// ============ UI ============
+const tok = c => Math.ceil(c.length / 4);
+function run() {
+  const cmd = document.getElementById("cmd").value;
+  const raw = document.getElementById("raw").value;
+  const out = document.getElementById("out");
+  const stats = document.getElementById("stats");
+  if (!raw.trim()) { out.textContent = "（请先粘贴压缩前内容）"; out.className = "miss"; stats.innerHTML = ""; return; }
+  const compact = compactByCommand(cmd, raw);
+  if (compact === null) {
+    out.textContent = "未识别命令 " + (cmd || "(空)") + " → 原样放行，不压缩。\n\n（可尝试：ls/tree、find、git status/log/diff、grep/rg、wc、du、df、ps、curl/wget、devecocli docs、vitest/jest 等）";
+    out.className = "miss";
+    stats.innerHTML = '<span class="stat">原始 ' + raw.length + ' 字符 ≈ ' + tok(raw) + ' tok</span><span class="stat">未压缩（放行）</span>';
+    return;
+  }
+  const full = wrapOutput(cmd, raw, compact);
+  const origLen = raw.length, fullLen = full.length;
+  const pct = ((1 - fullLen / origLen) * 100).toFixed(1);
+  out.textContent = full;
+  out.className = "pass";
+  stats.innerHTML =
+    '<span class="stat">原始 <b>' + origLen + '</b> 字符 ≈ ' + tok(raw) + ' tok</span>' +
+    '<span class="stat">压缩后(含 TSK 包裹) <b>' + fullLen + '</b> 字符 ≈ ' + tok(full) + ' tok</span>' +
+    '<span class="stat ratio">压缩比例 <b>' + pct + '%</b></span>';
+}
+function copyOut() {
+  const out = document.getElementById("out");
+  navigator.clipboard.writeText(out.textContent).then(() => {
+    const btn = event.target; btn.textContent = "已复制"; setTimeout(() => btn.textContent = "复制结果", 1200);
+  }).catch(() => {});
+}
+function loadSample() {
+  const cmd = document.getElementById("cmd");
+  const raw = document.getElementById("raw");
+  cmd.value = "git log --stat";
+  raw.value = `commit 9b4a1f2c8d7e3a5b (HEAD -> main)
+Author: TSK <tsk@example.com>
+Date:   Wed Oct 9 15:00:00 2026 +0800
+
+    fix: correct ls filter noise lines
+
+ mod2.ts | 4 +--
+ mod5.ts | 2 +-
+ 2 files changed, 4 insertions(+), 2 deletions(-)
+
+commit a1b2c3d4e5f6a7b8
+Author: TSK <tsk@example.com>
+Date:   Tue Oct 8 10:00:00 2026 +0800
+
+    feat: add devecocli docs compression
+
+ core/src/compact.rs | 96 ++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 96 insertions(+)
+`;
+  run();
+}
+// 支持的命令示例库（下拉选择 → 自动填命令 + 内容）
+const CMD_SAMPLES = {
+  "git-log": { command: "git log --stat", raw: `commit 9b4a1f2c8d7e3a5b (HEAD -> main)
+Author: TSK <tsk@example.com>
+Date:   Wed Oct 9 15:00:00 2026 +0800
+
+    fix: correct ls filter noise lines
+
+ mod2.ts | 4 +--
+ mod5.ts | 2 +-
+ 2 files changed, 4 insertions(+), 2 deletions(-)
+
+commit a1b2c3d4e5f6a7b8
+Author: TSK <tsk@example.com>
+Date:   Tue Oct 8 10:00:00 2026 +0800
+
+    feat: add devecocli docs compression
+
+ core/src/compact.rs | 96 ++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 96 insertions(+)` },
+  "git-diff": { command: "git diff HEAD~2 HEAD", raw: `diff --git a/mod2.ts b/mod2.ts
+@@ -1,4 +1,6 @@ export const fn2_0 = 2;
+ export const fn2_1 = 3;
++// later edit
++export const fn2_2 = 4;
+diff --git a/mod5.ts b/mod5.ts
+@@ -10,2 +10,3 @@
+ export const fn5_9 = 14;
++// later edit` },
+  "git-status": { command: "git status --short", raw: `M  mod2.ts
+M  mod5.ts
+?? new.js
+?? notes.md` },
+  "ls": { command: "ls -laR ./src", raw: `total 40
+drwxr-xr-x u g 0 Oct 9 10:00 ./
+drwxr-xr-x u g 0 Oct 9 10:00 ../
+./src:
+drwxr-xr-x u g 0 Oct 9 10:00 dir0/
+./src/dir0:
+-rw-r--r-- u g 100 Oct 9 10:00 f0.ts
+-rw-r--r-- u g 100 Oct 9 10:00 f1.ts
+-rw-r--r-- u g 100 Oct 9 10:00 f2.ts
+-rw-r--r-- u g 100 Oct 9 10:00 f3.ts
+-rw-r--r-- u g 100 Oct 9 10:00 f4.ts` },
+  "find": { command: "find src -name '*.ts'", raw: `src/a.ts
+src/b.ts
+src/deep/c.ts
+src/deep/d.ts
+src/deep/e.ts` },
+  "grep": { command: "grep -rn \"export const\" src", raw: `src/a.ts:1:export const a = 1;
+src/b.ts:2:export const b = 2;
+src/c.ts:3:export const c = 3;
+src/deep/d.ts:4:export const d = 4;` },
+  "wc": { command: "wc -l src/*.ts", raw: `10 src/deep/a.ts
+20 src/deep/b.ts
+30 total` },
+  "du": { command: "du -ak src", raw: `4 src/a.ts
+8 src/b.ts
+12 src` },
+  "df": { command: "df -h .", raw: `Filesystem      Size  Used Avail Use% Mounted on
+/dev/sda1        100G  20G   80G  20% /` },
+  "ps": { command: "ps aux", raw: `PID USER COMMAND
+1 root init
+2 root kthreadd
+345 admin node app.js
+346 admin node app.js worker` },
+  "curl": { command: "curl -v https://example.com", raw: `  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0
+100 1.2M  100 1.2M    0     0  1.2M      0      0 --:--:-- --:--:-- --:--:--  1.2M
+HTTP/1.1 200 OK
+curl: (22) The requested URL returned error: 404` },
+  "devecocli": { command: "devecocli docs read \"API参考/.../TextPicker\"", raw: `#### 接口
+TextPicker(options?: TextPickerOptions)
+根据指定的数据列表创建文本选择器。
+**元服务API：** 从API version 11开始，该接口支持在元服务中使用。
+| 参数名 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| options | TextPickerOptions | 否 | 配置文本选择器的参数。参数缺省时组件无法显示。 |
+#### TextPickerOptions对象说明
+| 名称 | 类型 | 只读 | 可选 | 说明 |
+| --- | --- | --- | --- | --- |
+| range | string[] \| string[][]10+ \| Resource | 否 | 否 | 选择器的数据选择列表。 |
+| selected | number \| number[]10+ | 否 | 是 | 设置选中项索引。 |
+\`\`\`
+const a = 1;
+\`\`\`
+正文段落该被丢弃` },
+  "vitest": { command: "npx vitest run", raw: ` RUN  v2.0.0
+  Tests  10 passed | 3 failed
+  ✗ t7 > case 7
+    AssertionError: expected 7 to equal 8
+  ✗ t8 > case 8
+    AssertionError: expected 8 to equal 9
+  ✗ t9 > case 9
+    AssertionError: expected 9 to equal 10` },
+};
+function pickCmd() {
+  const v = document.getElementById("cmdSelect").value;
+  if (!v) return;
+  const s = CMD_SAMPLES[v];
+  document.getElementById("cmd").value = s.command;
+  document.getElementById("raw").value = s.raw;
+  run();
+}
+document.getElementById("raw").addEventListener("input", run);
+</script>
+</body>
+</html>
