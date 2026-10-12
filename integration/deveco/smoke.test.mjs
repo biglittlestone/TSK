@@ -1,6 +1,6 @@
 // TSK × DevEco Code 沙盒冒烟测试（对齐 V7 插件设计）。
 // 目标：验证 opencode 平台上 TSK 的「真实价值机制」—— tool.execute.after 输出压缩
-// （大 Bash/工具输出 → 蒸馏只留 关键错误/状态行+结尾 + 超大落盘 KB + 取回指针），
+// （rtk 式逐命令语义压缩 + 无损落盘 KB + 取回指针；通用蒸馏已移除，未识别命令放行）。
 // 这正是 Claude Code 原生做不到的那条路。并覆盖：read 无损直通、净不模拟器拦截、小输出放行。
 //
 // 运行：bun integration/deveco/smoke.test.mjs   （插件是 TS + Bun.spawn，须用 bun；tsk 在 PATH）
@@ -88,11 +88,9 @@ console.log("== tool.execute.after 输出压缩（opencode 独有、Claude 原�
     { tool: "bash", sessionID: "s1", callID: "c4", args: { command: "analyze build log for errors" } },
     out,
   )
-  ok("大输出被改写（含 TSK 标记）", out.output.includes("[TSK {bash}: 压 ") && out.output.includes("B→") && out.output.includes("全文"))
-  ok("蒸馏保留关键错误行（错误感知）", out.output.includes("── 关键错误/状态行 ──") && out.output.includes("cannot resolve module"))
-  ok("蒸馏保留结尾（BUILD 结果）", out.output.includes("BUILD FAILED") || out.output.includes("── 结尾 ──"))
-  ok("超大输出落盘 KB + 取回指针", out.output.includes(".tsk/kb/k") && fs.readdirSync(ctxDir).some((f) => f.endsWith(".txt")))
-  ok("journal 记 sandbox-output（含原始/蒸馏规模）", fs.existsSync(journ) && fs.readFileSync(journ, "utf8").includes("sandbox-output"))
+  // 通用蒸馏已移除：未识别命令（analyze build log）→ 放行原文，不做丢信息压缩
+  ok("未识别命令放行原文（不做丢信息压缩）", out.output === raw)
+  ok("未识别命令不落盘 KB", !fs.existsSync(journ) || !fs.readFileSync(journ, "utf8").includes('"sandbox-output"'))
 }
 
 // 小输出（≤1600 字符）放行不动
@@ -195,20 +193,20 @@ console.log("== rtk 式逐命令压缩（ls / git status / test）==")
   ok("读自身 KB 原文直通(不套娃)", out.output === big)
 }
 {
-  // 对照：cat 普通大文件仍被压缩
+  // 对照：cat（未识别命令）普通大文件 → 放行，不做丢信息压缩
   const out = { output: "y".repeat(3200) }
   await hooks["tool.execute.after"]({ tool: "bash", sessionID: "s1", callID: "c22", args: { command: "cat someBig.log" } }, out)
-  ok("读普通大文件仍压缩(不受影响)", out.output.includes("[TSK {bash}: 压 ") && out.output.length < 3200)
+  ok("cat 大文件被压缩(保留头尾)", out.output.includes("cat (") && out.output.length < 3200)
 }
-// —— B(context-mode 式)：大输出分节 + 章节地图 + 每节一文件可检索 ——
+// —— B(context-mode 式)：大输出分节 + 章节地图 + 每节一文件可检索（rtk 命中命令触发）——
 {
-  const secs = Array.from({ length: 6 }, (_, i) => `## section-${i}\nline ${i} data ${"p".repeat(900)}`).join("\n\n")
-  const raw = `build start\n\n${secs}\n\nbuild end 0 errors`
+  const paths = Array.from({ length: 500 }, (_, i) => `src/mod${i}.ts`).join("\n")
+  const raw = `${paths}\n`
   const out = { output: raw }
-  await hooks["tool.execute.after"]({ tool: "bash", sessionID: "s1", callID: "c23", args: { command: "npm build 2>&1 | tee report.log" } }, out)
-  ok("B→章节地图出现", out.output.includes("§ 章节(") && out.output.includes("## section-0") && out.output.includes("## section-1"))
+  await hooks["tool.execute.after"]({ tool: "bash", sessionID: "s1", callID: "c23", args: { command: "find src -name '*.ts'" } }, out)
+  ok("B→章节地图出现(rtk 命中)", out.output.includes("§ 章节(") && out.output.includes("[TSK {bash}: 压 "))
   const secFiles = (fs.existsSync(path.join(proj, ".tsk", "kb")) ? fs.readdirSync(path.join(proj, ".tsk", "kb")) : []).filter((f) => /s\d+\.txt$/.test(f))
-  ok("B→每节一文件落盘", secFiles.length >= 6)
+  ok("B→每节一文件落盘", secFiles.length >= 4)
 }
 
 fs.rmSync(base, { recursive: true, force: true })

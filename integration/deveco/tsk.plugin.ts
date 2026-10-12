@@ -15,8 +15,7 @@
 //
 // 约束：单文件（deveco 加载），`void` 引用全清，惰性取 node:fs，服用 Bun.spawn，全程 fail-open。
 // 记账：.<cwd>/.tsk/injections.jsonl（报告用）+ .<cwd>/.tsk/ctx/（原始落盘 + index.json5）。
-const FINAL_RESULT_KEEP = 800         // 最终只保留尾部多少字符（构建结论/末尾错误）
-const HARD_CAP_BYTES = 16 * 1024 * 1024 // 沙箱 stdout 硬上限（超限杀进程树）
+const FINAL_RESULT_KEEP = 800         // 输出压缩 size gate：≤800*2=1600B 放行（通用蒸馏已移除，仅做阈值）
 const KB_INTENT_THRESHOLD = 5 * 1024  // 大输出且带 intent → 入知识库
 const KB_AUTO_THRESHOLD = 100 * 1024  // 超过此自动入知识库
 const CAP_LIST = 20                    // rtk 式：列表类命令保留前 N 项
@@ -24,7 +23,6 @@ const CAP_ERR = 20                     // 测试/构建：前 N 条失败
 const CAP_WARN = 10
 const KB_TITLE_PREVIEW = 120          // 检索只回标题 + 120 字符预览
 const SANDBOX_TOOLS = new Set(["bash", "build_project", "arkts_check"])
-const READONLY_CMD = /^(cat|ls|find|grep|head|tail|sed|awk|wc|env|printenv|echo|pwd|which|type|file|stat|du|df|tree)\b/
 
 // —— 环境清洗：约 70 个危险/敏感环境变量，从子进程.env 中剔除 ——
 const ENV_BLACKLIST = [
@@ -43,17 +41,6 @@ const ENV_BLACKLIST = [
   "JITSI_APP_ID", "AUTHORIZATION", "X_API_KEY", "HTTP_AUTHORIZATION",
   "DEVECO_TOKEN", "DEVECO_API_KEY", "ARK_API_KEY", "VOLC_API_KEY",
 ].map((v) => v.toLowerCase())
-function cleanEnv() {
-  const out: Record<string, string> = {}
-  for (const [k, v] of Object.entries(process.env)) {
-    if (v == null) continue
-    const kl = k.toLowerCase()
-    if (ENV_BLACKLIST.includes(kl)) continue
-    if (kl.includes("key") || kl.includes("token") || kl.includes("secret") || kl.includes("password")) continue
-    out[k] = v
-  }
-  return out
-}
 
 // 惰性 node:fs
 const fs = async () => { try { return await import("node:fs") } catch { return undefined } }
@@ -69,110 +56,48 @@ export default {
     const cwd = directory ?? ""
     const journalPath = (process.env.TSK_JOURNAL_DIR || `${cwd}/.tsk`) + `/injections.jsonl`
     const eventsPath = `${cwd}/.tsk/events.jsonl`
-    const goldens = new Map<string, { distilled: string; raw: string }>() // callID -> sandbox run result
     const readCount = new Map<string, number>() // file->read次数（首读压缩/回读还原全文 escape-hatch）
 
     const journal = async (row: any) => {
       try { const f = await fs(); if (!f) return; f.mkdirSync(`${cwd}/.tsk`, { recursive: true }); f.appendFileSync(journalPath, JSON.stringify({ ts: Date.now(), ...row }) + "\n") } catch {}
     }
 
-    // —— 沙箱执行：清理环境 + 硬上限 + 流式捕获 ——
-    const sandboxRun = async (cmd: string, runCwd: string) => {
-      const env = cleanEnv()
-      try {
-        const proc = Bun.spawn(["bash", "-c", cmd], { cwd: runCwd, env, stdout: "pipe", stderr: "pipe" })
-        const reader = proc.stdout.getReader()
-        const dec = new TextDecoder()
-        let out = ""
-        let over = false
-        for (;;) {
-          const { done, value } = await reader.read()
-          if (done) break
-          out += dec.decode(value, { stream: true })
-          if (out.length > HARD_CAP_BYTES) { over = true; try { proc.kill() } catch {}; break }
-        }
-        // tsk → Rust 核心桥（曾被误删，必须存在）
-    const tskHook = async (hookName: string, body: any) => {
-      try {
-        const proc = Bun.spawn(["tsk", "hook", hookName], { stdin: "pipe", stdout: "pipe", stderr: "pipe" })
-        proc.stdin.write(JSON.stringify(body)); proc.stdin.end()
-        const timeout = new Promise((_, rej) => { const t = setTimeout(() => { try { proc.kill() } catch {}; rej(new Error("tskHook-timeout-4s")) }, 4000) })
-        const raw: Uint8Array = await Promise.race([new Response(proc.stdout).arrayBuffer(), timeout])
-        const errBuf = await new Response(proc.stderr).arrayBuffer().catch(() => new Uint8Array(0))
-        if (errBuf.byteLength) await journal({ kind: "tskhook-stderr", hook: hookName, err: new TextDecoder().decode(errBuf).slice(0, 200) }).catch(() => {})
-        const o = JSON.parse(new TextDecoder().decode(raw)); return (o?.hookSpecificOutput ?? {}) as any
-      } catch (e: any) {
-        await journal({ kind: "tskhook-error", hook: hookName, err: String((e && e.message) || e).slice(0, 200) }).catch(() => {})
-        return {}
-      }
-    }
-
-    return { code: over ? -9 : proc.exitCode, out, over }
-      } catch {
-        return { code: -1, out: "", over: false }
-      }
-    }
-
-    // ———— 输出压缩管线 ————
-    // tskCompress 委托 Rust 核心（共享收益引擎），替代插件内联 compactByCommand。
     const tskCompress = async (cmd: string, raw: string): Promise<string | null> => {
-      try {
-        const proc = Bun.spawn(["tsk", "compress", cmd], { stdin: "pipe", stdout: "pipe", stderr: "pipe" })
-        proc.stdin.write(raw); proc.stdin.end()
-        const timeout = new Promise((_, rej) => { const t = setTimeout(() => { try { proc.kill() } catch {}; rej(new Error("compress-timeout-8s")) }, 8000) })
-        const buf: Uint8Array = await Promise.race([new Response(proc.stdout).arrayBuffer(), timeout])
-        const out = new TextDecoder().decode(buf).trim()
-        return out && out !== "{}" ? out : null   // CLI 无命中打印 `{}`（hook passthrough 约定）→ 视为未匹配
-      } catch { return null }
+      // 候选：PATH 里的 `tsk` → 用户目录固定安装路径（不依赖 PATH——IDE 重开的环境快照可能不含新加的 PATH）
+      const home = process.env.USERPROFILE || process.env.HOME || ""
+      const candidates = ["tsk", `${home}\\.tsk\\bin\\tsk.exe`, `${home}/.tsk/bin/tsk.exe`]
+      for (const bin of candidates) {
+        if (!bin) continue
+        try {
+          const proc = Bun.spawn([bin, "compress", cmd], { stdin: "pipe", stdout: "pipe", stderr: "pipe" })
+          proc.stdin.write(raw); proc.stdin.end()
+          const timeout = new Promise((_, rej) => { const t = setTimeout(() => { try { proc.kill() } catch {}; rej(new Error("compress-timeout-8s")) }, 8000) })
+          const buf: Uint8Array = await Promise.race([new Response(proc.stdout).arrayBuffer(), timeout])
+          const out = new TextDecoder().decode(buf).trim()
+          if (out && out !== "{}") return out   // CLI 无命中打印 `{}`（hook passthrough 约定）→ 视为未匹配
+        } catch {}
+      }
+      return null
+    }
+    const tskArgs = async (args: string[]) => {
+      const home = process.env.USERPROFILE || process.env.HOME || ""
+      const candidates = ["tsk", `${home}\\.tsk\\bin\\tsk.exe`, `${home}/.tsk/bin/tsk.exe`]
+      for (const bin of candidates) {
+        if (!bin) continue
+        try {
+          const proc = Bun.spawn([bin, ...args], { stdout: "pipe", stderr: "pipe" })
+          const buf: Uint8Array = await new Response(proc.stdout).arrayBuffer()
+          const s = new TextDecoder().decode(buf).trim()
+          if (s) return s
+        } catch {}
+      }
+      return ""
     }
     const ANSI = /\u001b\[[0-9;]*[A-Za-z]|[\u001b][()][0-9;]*[A-Za-z]|\[2K|\r/g
     const ansiStrip = (s: string) => s.replace(ANSI, "")
-    const dropProgress = (s: string) =>
-      s.split("\n").filter((l) => !/^\s*[0-9]+\s*\/\s*[0-9]+\s*[^\n]*\d+%/.test(l) && !/^\s*[0-9]+%[^\n]*$/.test(l)).join("\n")
-    const foldDupLines = (s: string) => {
-      const lines = s.split("\n"); const out: string[] = []; let prev = "", cnt = 0
-      for (const l of lines) { if (l === prev) { cnt++; if (cnt <= 3) out.push(l) } else { cnt = 0; prev = l; out.push(l) } }
-      return out.join("\n")
-    }
-    const jsonMinify = (s: string) => { try { return JSON.stringify(JSON.parse(s)) } catch { return s } }
-    const smartTruncate = (s: string, head = 0.6, tail = 0.4) => {
-      if (s.length <= FINAL_RESULT_KEEP * 4) return s
-      const h = Math.floor(s.length * head), t = Math.floor(s.length * tail)
-      // 超大行采样
-      const big = s.split("\n").filter((l) => l.length > 4000).slice(0, 3).join("\n")
-      return `${s.slice(0, h)}\n…[TSK: 中间 ${s.length - h - t} 字符已省略]…\n${s.slice(-t)}${big ? `\n[TSK: 超大行采样]\n${big}` : ""}`
-    }
-    const commandFilter = (s: string, cmd: string) => {
-      if (/npm\b/.test(cmd)) return s.split("\n").filter((l) => !/^\s*(npm warn|npm notice|npm info|added|removed|changed)\b/.test(l)).join("\n")
-      if (/git\b/.test(cmd)) return s.split("\n").filter((l) => !/warning: LF|hint:|^\s*$/.test(l)).join("\n")
-      if (/ps\b/.test(cmd)) return s.split("\n").slice(0, 40).join("\n")
-      return s
-    }
-    const compressPipeline = (raw: string, cmd: string) => {
-      let s = ansiStrip(raw)
-      s = commandFilter(s, cmd)
-      s = jsonMinify(s)
-      s = dropProgress(s)
-      s = foldDupLines(s)
-      s = smartTruncate(s)
-      return s
-    }
-    const distill = (s: string) => {
-      // 错误感知：保留【关键错误/状态行 + 结尾】，丢中间 bulk —— 模型仍能看错修错，成功率不受影响。
-      const lines = s.split("\n")
-      const KEY = /error|fail|exception|throw|warn|cannot|unable|✖|失败|错误|BUILD (SUCCESSFUL|FAILED)|Compil|\b\d+ error(s)?\b/i
-      const keyLines = lines.filter((l) => KEY.test(l)).slice(0, 60).join("\n")
-      const tail = s.slice(-FINAL_RESULT_KEEP)
-      const kept = (keyLines.length + tail.length + 200)
-      const verbose = s.length > FINAL_RESULT_KEEP * 6 || keyLines.length > 3
-      const text = verbose
-        ? `── 关键错误/状态行 ──\n${keyLines.trim() || "(无匹配)"}\n── 结尾 ──\n${tail.trim()}\n── end ──`
-        : `── 最终结果 ──\n${tail.trim()}\n── end ──`
-      return { text, kept: Math.min(kept, s.length) }
-    }
 
     // rtk 式：逐命令语义压缩（有损但符合工具短结果格式）。无损靠调用方把 raw 落盘 KB 保回取。
-    // 未识别的命令返回 null → 落回上面的通用 distill。
+    // 未识别的命令返回 null → 调用方放行原文（通用蒸馏已移除，见 tool.execute.after）。
     const kbid = (raw: string) => { let h = 0; for (let i = 0; i < raw.length; i++) h = (h * 31 + raw.charCodeAt(i)) | 0; return `k${(h >>> 0).toString(16)}` }
     const tokenize = (s: string) => (s.toLowerCase().match(/[a-z0-9_]{2,}/g) || []).filter((w) => !["the","and","for","are","was","with","this","that","from","have","tsk"].includes(w))
     const kbsave = async (id: string, raw: string, title: string, command: string) => {
@@ -242,6 +167,21 @@ export default {
     }
 
     return {
+      "UserPromptSubmit": async (input: any, output: any) => {
+        // 会话内 /tsk 命令：显示 TSK 累计收益（tsk report --all）。fail-open。
+        const p = String(input?.prompt ?? input?.message ?? input?.text ?? "")
+        if (!p.trim()) return
+        if (!/^\s*\/tsk(\s*$|\s)/.test(p)) return
+        try {
+          const report = await tskArgs(["report", "--all"])
+          if (report) {
+            const note = `[TSK 累计收益]\n${report}`
+            if (output && "prompt" in output) { output.prompt = `${p}\n\n${note}`; return }
+            if (output && "updatedPrompt" in output) { output.updatedPrompt = `${p}\n\n${note}`; return }
+            if (output && "message" in output) { output.message = `${p}\n\n${note}`; return }
+          }
+        } catch {}
+      },
       "tool.execute.before": async (input: any, output: any) => {
         // 默认 read 无损；TSK_READ_COMPRESS=1 时启用 read 骨架（受控复验「输入能否压」）
         const tool = input?.tool
@@ -251,7 +191,9 @@ export default {
           // 永不启动模拟器/设备/上真机（用户强制，常驻）
           const NO_EMULATOR = /(^|[\s;])(emulator|qemu|avd)\b|deveco\s+run\b|hdc\s+(launch|start|install)\b|--device\b|start\s+(emulator|avd)\b/i
           if (NO_EMULATOR.test(cmd)) {
-            output.args.command = `echo "[TSK 拦截：永不启动模拟器/设备/真机 (${cmd.slice(0, 80)}…)。已完成构建，不上设备运行。]"`
+            // 替换文本只留字母数字/中文——含括号/斜杠/引号会被 bash 解析成语法错误（实测嵌套 emulator 命令）
+            const safe = cmd.slice(0, 60).replace(/[^A-Za-z0-9_一-龥]/g, "")
+            output.args.command = `echo "[TSK 拦截：永不启动模拟器/设备/真机 ${safe}。已完成构建，不上设备运行。]"`
             await journal({ kind: "emulator-blocked", sessionID: input.sessionID, callID: input.callID, cmd: cmd.slice(0, 160) }).catch(() => {})
             return
           }
@@ -274,26 +216,13 @@ export default {
         // size gate：小输出(≤1600字符)直接放行不动，避免每个 bash 都被包一层「沙箱」噪声
         if (src.length <= FINAL_RESULT_KEEP * 2) return
 
-        // rtk 式逐命令语义压缩：命中 → 用紧凑但符合工具格式的文本；未命中 → 通用管线。
+        // rtk 式逐命令语义压缩：命中 → 用紧凑但符合工具格式的文本；未命中 → 放行原文。
+        // 通用蒸馏已移除（deveco-eval-net 实测）：丢信息压缩无理论依据、回读概率高，端到端不省。
         // 无损保证：只要做了紧凑，就一定把原文落盘 KB，模型可 read/cat 或 tsk search 取回完整内容。
         const compact = await tskCompress(cmd, src)
-        let raw = src
-        let final: { text: string; kept: number }
-        if (compact !== null) {
-          raw = src
-          final = { text: compact, kept: compact.length }
-        } else {
-          // 建 sandbox-重跑的原始+蒸馏（read 类命令幂等 → 用重跑结果；否则用真实输出走管线）
-          raw = src
-          let distilledRaw = ""
-          if (tool === "bash" && READONLY_CMD.test(cmd)) {
-            const sb = await sandboxRun(cmd, cwd)
-            if (!sb.over) { raw = sb.out; distilledRaw = compressPipeline(sb.out, cmd) }
-          }
-          if (!distilledRaw) distilledRaw = compressPipeline(src, cmd)
-          final = distill(distilledRaw)
-        }
-        goldens.set(input?.callID ?? `c${Date.now()}`, { distilled: final.text, raw })
+        if (compact === null) return // 命令不识别 → 放行原文，不做丢信息压缩
+        const raw = src
+        const final = { text: compact, kept: compact.length }
 
         // 大输出 → 文件化知识库；并把「取回原文的指针 + 检索方式」写进上下文（外置全文回读=显式检索）。
         // rtk 式命中 → 必落盘（无损）；否则沿用阈值 + 意图。
