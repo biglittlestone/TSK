@@ -13,12 +13,24 @@ pub fn tsk_home() -> PathBuf {
     })
 }
 
-/// `HOME`, then `USERPROFILE` on Windows.
+/// `HOME`, then `USERPROFILE` on non-Windows; `USERPROFILE` first on Windows
+/// (git-bash sets HOME to a POSIX path like `/c/Users/x`, which Windows PathBuf
+/// would misparse as `C:\c\Users\x` and read nothing).
 fn home() -> PathBuf {
-    std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("."))
+    #[cfg(windows)]
+    {
+        std::env::var("USERPROFILE")
+            .or_else(|_| std::env::var("HOME"))
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("."))
+    }
+    #[cfg(not(windows))]
+    {
+        std::env::var("HOME")
+            .or_else(|_| std::env::var("USERPROFILE"))
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("."))
+    }
 }
 
 /// `<tsk_home>/<session_id>` — ledger, snapshot, events.log, ext/.

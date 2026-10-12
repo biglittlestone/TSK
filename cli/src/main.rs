@@ -525,33 +525,21 @@ fn tool_of(e: &tsk_core::ledger::Entry) -> Option<&str> {
     }
 }
 
-/// Original bytes of files that were compressed (skeleton / externalize) — the
-/// amount that would re-enter context if the model later read the full text.
-fn orig_of(e: &tsk_core::ledger::Entry) -> usize {
-    match e {
-        tsk_core::ledger::Entry::Rewrite(x) => x.orig_bytes,
-        tsk_core::ledger::Entry::Externalize(x) => x.orig_bytes,
-        _ => 0,
-    }
-}
-
 fn summarize(entries: &[tsk_core::ledger::Entry]) -> String {
     let mut total = 0usize;
     let mut cost = 0usize;
-    let mut orig_full = 0usize; // 被压缩文件的原文总量（骨架/外置）
     let mut tools: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
     let mut retrievals = 0usize;
     for e in entries {
         total += saved_of(e);
         cost += cost_of(e);
-        orig_full += orig_of(e);
         if let Some(t) = tool_of(e) {
             *tools.entry(t.to_string()).or_insert(0) += saved_of(e);
         }
         if matches!(e, tsk_core::ledger::Entry::Retrieval(_)) {
             retrievals += 1;
         }
-        // 回读全文的字节成本计入净省扣减（净省 = 乐观 saved − 注入 − 回读）
+        // 回读全文的字节成本计入净省扣减（净省 = saved − 注入 − 实际回读）
         if let tsk_core::ledger::Entry::Retrieval(r) = e {
             cost += r.retrieved_bytes.unwrap_or(0);
         }
@@ -569,17 +557,6 @@ fn summarize(entries: &[tsk_core::ledger::Entry]) -> String {
         fmt_int(net),
         retrievals
     );
-    let full_tok = est_tok(orig_full) as i64;
-    let pess_net = est_tok(total) as i64 - full_tok - est_tok(cost) as i64;
-    s.push_str(&format!(
-        "压缩原文合计: {} bytes ≈ {} est tokens\n\
-          （悲观上限：若全部回读原文全文, 额外输入 ≈ {} est tok; 净省 ≈ {} est tok）\n\
-         —— 骨架/外置的节省以“不回读全文”为前提; 回读即付该额外输入\n",
-        fmt_int(orig_full),
-        est_tok(orig_full),
-        full_tok,
-        pess_net
-    ));
     let maxk = tools.keys().map(|k| k.len()).max().unwrap_or(4);
     for (k, v) in &tools {
         let pct = if total > 0 { *v * 100 / total } else { 0 };
