@@ -97,11 +97,11 @@ DevEco 是 opencode fork，两类环境绑定点的真实事件/路径名因 for
 ## 7. 沙盒自测（无需 DevEco 运行时）
 
 ```bash
-node integration/deveco/smoke.test.mjs   # 需 tsk 在 PATH；或设 TSK_BIN=/path/to/tsk
+bun integration/deveco/smoke.test.mjs   # 须用 bun（插件是 TS + Bun.spawn）；需 tsk 在 PATH，或设 TSK_BIN=/path/to/tsk
 ```
 
-用**真实 `tsk` 二进制 + 真实插件**驱动模拟事件流，数据落隔离临时 `TSK_HOME`。覆盖 17 项：
-骨架改写、逃逸口 passthrough、非 read 不改写、full/lite/off 注入与幂等、auto 轮 1/2 不注 / 轮 3 注入 / 轮 4 reinforce / ruleset 恰一次、compact→RESUME + 锚点 + 快照落盘。
+用**真实 `tsk` 二进制 + 真实插件**驱动模拟事件流，数据落隔离临时 `TSK_HOME`。覆盖：
+骨架改写、逃逸口 passthrough、非 read 不改写、full/lite/off 注入与幂等、auto 轮 1/2 不注 / 轮 3 注入 / 轮 4 reinforce / ruleset 恰一次、compact→RESUME + 锚点 + 快照落盘、rtk 式逐命令压缩（ls/git/test/cat/hvigor）、大输出落盘 KB 与章节地图、模拟器拦截、小输出放行。
 
 ## 8. 卸载
 

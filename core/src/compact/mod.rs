@@ -32,98 +32,14 @@ fn strip_ansi(s: &str) -> String {
     re.replace_all(s, "").to_string()
 }
 
-// ---- Drain 式日志模板挖掘（借鉴 headroom LogTemplate）【实验特性，暂不入 deveco PR】----
-// 把「只有时间戳/ID/路径变化」的重复行折叠成 [模板: <TS> worker-<*> job <*>] (N 次) + 变体表。
-// 只折叠连续 run、保顺序；保守参数：min_run=3、相似度 0.4、至少 2 个常量 token。
-const LT_MIN_RUN: usize = 3;
-const LT_SIM: f32 = 0.4;
-const LT_MIN_CONST: usize = 2;
+mod log_template;
+use log_template::log_template;
 
-struct LtRun {
-    indices: Vec<usize>,
-    /// Some(token)=该位置至今不变；None=已变化(通配 <*>)
-    template: Vec<Option<String>>,
-}
-
-fn lt_tokenize(line: &str) -> Vec<&str> { line.split_whitespace().collect() }
-
-/// 新行是否延续当前 run：token 数相同 + 匹配位置占比 ≥ 相似度阈值（含已有通配位）。
-fn lt_extends(run: &LtRun, tokens: &[&str]) -> bool {
-    if tokens.len() != run.template.len() { return false }
-    let len = tokens.len() as f32;
-    let matches: usize = tokens.iter().enumerate()
-        .map(|(i, t)| match &run.template[i] { Some(c) if c == t => 1, None => 1, _ => 0 })
-        .sum();
-    (matches as f32 / len) >= LT_SIM
-}
-
-/// 位置 token 与模板不同 → 变通配。
-fn lt_merge(template: &mut [Option<String>], tokens: &[&str]) {
-    for (i, t) in tokens.iter().enumerate() {
-        if let Some(c) = &template[i] { if c != t { template[i] = None } }
-    }
-}
-
-fn lt_flush(run: &LtRun, lines: &[&str], tokenized: &[Vec<&str>], tid: &mut usize, out: &mut String) {
-    let consts = run.template.iter().filter(|t| t.is_some()).count();
-    let varies = run.template.len() - consts;
-    let collapse = run.indices.len() >= LT_MIN_RUN && consts >= LT_MIN_CONST && varies > 0;
-    if !collapse {
-        for &i in &run.indices { out.push_str(lines[i]); out.push('\n'); }
-        return
-    }
-    // 模板头：[Template T<n>: TOKEN <*> TOKEN ...] (N occurrences)
-    out.push_str(&format!("[Template T{tid}: "));
-    *tid += 1;
-    for (i, slot) in run.template.iter().enumerate() {
-        if i > 0 { out.push(' ') }
-        match slot { Some(c) => out.push_str(c), None => out.push_str("<*>") }
-    }
-    out.push_str(&format!("] ({} occurrences)\n", run.indices.len()));
-    // 变体表：每行只输出变体位置的 token
-    for &i in &run.indices {
-        let toks = &tokenized[i];
-        let mut first = true;
-        for (pos, slot) in run.template.iter().enumerate() {
-            if slot.is_none() {
-                if !first { out.push(' ') }
-                out.push_str(toks[pos]);
-                first = false;
-            }
-        }
-        out.push('\n');
-    }
-}
-
-/// 日志模板挖掘（无损）：重复进度/日志行折叠为模板+变体表；空行/单行/不达标原样。
-pub fn log_template(text: &str) -> String {
-    if text.is_empty() { return String::new() }
-    let lines: Vec<&str> = text.lines().collect();
-    let tokenized: Vec<Vec<&str>> = lines.iter().map(|l| l.split_whitespace().collect()).collect();
-    let mut out = String::with_capacity(text.len());
-    let mut tid = 1usize;
-    let mut run: Option<LtRun> = None;
-    for (i, tokens) in tokenized.iter().enumerate() {
-        if tokens.is_empty() {
-            if let Some(r) = run.take() { lt_flush(&r, &lines, &tokenized, &mut tid, &mut out) }
-            out.push_str(lines[i]); out.push('\n');
-            continue
-        }
-        match run.as_mut() {
-            Some(r) if lt_extends(r, tokens) => { r.indices.push(i); lt_merge(&mut r.template, tokens) }
-            _ => {
-                if let Some(r) = run.take() { lt_flush(&r, &lines, &tokenized, &mut tid, &mut out) }
-                run = Some(LtRun { indices: vec![i], template: tokens.iter().map(|t| Some((*t).to_string())).collect() });
-            }
-        }
-    }
-    if let Some(r) = run.take() { lt_flush(&r, &lines, &tokenized, &mut tid, &mut out) }
-    // 防御：绝不比原文长（折叠未生效时回退原文）
-    if out.len() >= text.len() { return text.to_string() }
-    out
-}
-
-/// 按命令类型压缩（未识别返回 None → 调用方回退通用蒸馏）。输出格式与插件 v 版本一致。
+/// 按命令类型压缩。返回 `None` = 放行原文，不做丢信息压缩（通用蒸馏已移除）。
+///
+/// 唯一**按输出内容**判定的例外（不依赖命令名）：测试/构建日志形态
+/// （输出含 `BUILD SUCCESSFUL/FAILED`、Tests/failed/✗ 汇总行）——这类输出被截断
+/// 的部分天然是进度噪音，结论行+失败行（上限 CAP_ERR）+ KB 无损回取足以端到端作答。
 pub fn compact_by_command(cmd: &str, raw: &str) -> Option<String> {
     let lines = lines_of(raw);
     // ---- ls / tree ----
@@ -259,7 +175,7 @@ pub fn compact_by_command(cmd: &str, raw: &str) -> Option<String> {
             let paths: Vec<String> = files_r.iter().map(|r| r.last().unwrap().clone()).collect();
             let prefix = if paths.len() > 1 { common_prefix(&paths) } else { String::new() };
             let shown: Vec<String> = files_r.iter().map(|r| format!("{} {}", r[..r.len() - 1].join(" "), r.last().unwrap()[prefix.len()..].to_string())).collect();
-            let mut out = format!("wc ({} 项，公共前缀\"{}\"已剥)：\n{}", files_r.len(), prefix, show(&shown, CAP_LIST));
+            let mut out = format!("wc ({} 项，公共前缀\"{}\"已剥)：\n{}", files_r.len(), prefix, head(&shown, CAP_LIST));
             if let Some(t) = rows.iter().find(|r| r.last().map(|s| s.as_str()) == Some("total")) { out = format!("{out}\n{}", t.join(" ")) }
             return Some(out);
         }
@@ -463,49 +379,7 @@ pub fn compact_by_command(cmd: &str, raw: &str) -> Option<String> {
         if !fails.is_empty() { parts.push(format!("failures ({} shown):\n{}", fails.len(), fails.join("\n"))) }
         if !parts.is_empty() { return Some(parts.join("\n\n")) }
     }
-    // ---- JSON 数组统计压缩（借鉴 headroom SmartCrusher 精髓）【实验特性，暂不入 deveco PR】----
-    // 工具输出是 JSON 数组（≥5 项 dict）时：常量字段只输出一次，变化字段保留唯一值（去重）。
-    // 保守：常量率 ≥0.2 才压；压缩后不短于原文则回退（与 headroom 的「安全粉碎」一致）。
-    if raw.trim_start().starts_with('[') {
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(raw.trim_start()) {
-            if let Some(items) = v.as_array() {
-                if items.len() >= 5 && items.iter().all(|x| x.is_object()) {
-                    // 字段并集（BTreeSet → 排序确定性，同 headroom）
-                    let mut keys: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-                    for it in items { if let Some(o) = it.as_object() { for k in o.keys() { keys.insert(k.clone()); } } }
-                    // 字段统计：常量字段 / 变化字段唯一值
-                    let mut const_fields: Vec<(String, String)> = Vec::new();
-                    let mut var_fields: Vec<(String, Vec<String>)> = Vec::new();
-                    for k in &keys {
-                        let vals: Vec<String> = items.iter().filter_map(|it| it.get(k))
-                            .filter_map(|x| x.as_str().map(|s| s.to_string()).or_else(|| Some(x.to_string()))).collect();
-                        let all_same = !vals.is_empty() && vals.len() == items.len() && vals.iter().all(|v| v == &vals[0]);
-                        if all_same {
-                            const_fields.push((k.clone(), vals[0].clone()));
-                        } else {
-                            let mut uniq = vals.clone(); uniq.sort(); uniq.dedup();
-                            var_fields.push((k.clone(), uniq));
-                        }
-                    }
-                    let const_ratio = const_fields.len() as f64 / keys.len().max(1) as f64;
-                    if const_ratio >= 0.2 {
-                        let mut out = format!("JSON 数组 ({} 项, {} 字段, 常量 {}):\n", items.len(), keys.len(), const_fields.len());
-                        for (k, val) in &const_fields { out.push_str(&format!("  {k}: {val}\n")); }
-                        for (k, uniq) in &var_fields {
-                            if uniq.len() <= 5 { out.push_str(&format!("  {k}: {}\n", uniq.join(" | "))) }
-                            else { out.push_str(&format!("  {k}: {} 唯一值 (前5): {}\n", uniq.len(), uniq[..5].join(" | "))) }
-                        }
-                        if out.len() < raw.len() { return Some(out) }
-                    }
-                }
-            }
-        }
-    }
     None
-}
-fn show(a: &[String], n: usize) -> String {
-    let shown = a.iter().take(n).cloned().collect::<Vec<_>>().join("\n");
-    if a.len() > n { format!("{shown}\n… +{} more", a.len() - n) } else { shown }
 }
 
 #[cfg(test)]
@@ -606,21 +480,6 @@ mod t {
         let out = log_template(raw);
         assert!(!out.contains("[Template"), "少重复不折叠: {out}");
         assert!(out == raw, "原样返回: {out}");
-    }
-    #[test]
-    fn json_array_const_field_fold() {
-        let raw = format!("[{{\"name\":\"a\",\"status\":\"ok\",\"v\":{}}},{{\"name\":\"b\",\"status\":\"ok\",\"v\":{}}},{{\"name\":\"c\",\"status\":\"ok\",\"v\":{}}},{{\"name\":\"d\",\"status\":\"ok\",\"v\":{}}},{{\"name\":\"e\",\"status\":\"ok\",\"v\":{}}}]", 1, 2, 3, 4, 5);
-        let out = compact_by_command("curl -s API", &raw).unwrap();
-        assert!(out.contains("JSON 数组"), "got: {out}");
-        assert!(out.contains("status: ok"), "常量字段折叠: {out}");
-        assert!(out.contains("name: a | b | c | d | e"), "唯一值: {out}");
-    }
-    #[test]
-    fn json_array_not_crushable_passes() {
-        // 无常量字段（全变化）→ 不压缩，放行
-        let raw = format!("[{{\"n\":\"a\"}},{{\"n\":\"b\"}},{{\"n\":\"c\"}},{{\"n\":\"d\"}},{{\"n\":\"e\"}},{{\"n\":\"f\"}},{{\"n\":\"g\"}}]");
-        let out = compact_by_command("node script.js", &raw);
-        assert!(out.is_none(), "全变化字段不压: {out:?}");
     }
     #[test]
     fn test_report_shaped() {

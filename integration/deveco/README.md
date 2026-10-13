@@ -47,11 +47,25 @@ DevEco 启动时会自动加载 `.deveco/plugin/*.ts`；无需改 `deveco.json`�
 ## 冒烟测试（沙盒，无需 DevEco 运行时）
 
 ```bash
-node integration/deveco/smoke.test.mjs
+bun integration/deveco/smoke.test.mjs
 ```
 
 用真实 `tsk` 二进制 + 真实插件驱动 DevEco 事件流（session.created / tool.execute.before / system.transform），
 数据落在隔离的临时 `TSK_HOME`。覆盖：骨架改写、逃逸口 passthrough、非 read 不改写、输出压缩 full/lite 注入与 off 不注、注入幂等。
+
+## 评测工具（`eval/`）
+
+收益量化的独立脚本，均只驱动当前源码、不落任何真实用户数据：
+
+| 脚本 | 用途 | 报告 |
+|---|---|---|
+| `eval/net-benefit-test.mjs` | 12 个命令场景的**净收益** = saved − 回读成本（真跑命令 + 真回读模拟） | `docs/NET-BENEFIT-REPORT.md` |
+| `eval/rtk-benefit-test.mjs` | 单命令 AB：rtk 式压缩的 bytes/token 削减 + 无损回取验证 | 控制台 |
+| `eval/deveco-eval-net.mjs` | 评测集（26 个 sdd-bootstrap 真实会话导出）**重放**压缩的端到端收益 | `docs/DEVECO-EVAL-NET-REPORT.md` |
+| `eval/deveco-db-eval.mjs` | 从 `deveco-local.db` 提取真实会话按**任务级**算 saved / 会话总 input | `docs/DEVECO-DB-EVAL-REPORT.md` |
+| `eval/deveco-e2e-collect.mjs` | 收集一次真跑完的会话目录：压缩次数 / saved / 回读 / 净收益 / 完成度 | 控制台 |
+
+前两个需 `tsk` 在 PATH（读同目录上一级的 `tsk.plugin.ts`）；后三个读外部评测产物/数据库（路径写在脚本头）。
 
 ## 验证
 

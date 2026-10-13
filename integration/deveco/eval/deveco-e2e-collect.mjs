@@ -1,5 +1,5 @@
 // deveco 端到端收集：从一次跑完的 deveco 会话目录算实际净收益（journal 记账 + 日志回读 + 完成度）。
-// 用法：bun integration/deveco/deveco-e2e-collect.mjs <run 目录>
+// 用法：bun integration/deveco/eval/deveco-e2e-collect.mjs <run 目录>
 // 输出：压缩次数 / saved tok / 回读次数 / 净收益 / 完成度（hap 或 BUILD SUCCESSFUL）
 import { readFileSync, existsSync } from "node:fs"
 import { spawnSync } from "node:child_process"

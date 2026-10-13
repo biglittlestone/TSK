@@ -2,7 +2,7 @@
 // 每个命令场景：① 真实命令的真实输出(off 基线) → ② 驱动与部署同一份插件压缩(on)
 // → ③ 常规任务判定(压缩文本是否已含答案，通常 0 回读) → ④ 深挖任务模拟 tsk search 回读并量成本
 // → net = saved − 回读成本。清单落 docs/NET-BENEFIT-REPORT.md。
-// 运行：bun integration/deveco/net-benefit-test.mjs [--no-real]
+// 运行：bun integration/deveco/eval/net-benefit-test.mjs [--no-real]
 import { spawnSync } from "node:child_process"
 import fs from "node:fs"
 import os from "node:os"
@@ -15,7 +15,7 @@ const repo = path.join(BASE, "repo")
 const proj = path.join(BASE, "proj")
 
 // —— 0. 加载插件（与部署的同一份源码，纯 JS 驱动 tool.execute.after）——
-const pluginSrc = fs.readFileSync(path.join(import.meta.dirname, "tsk.plugin.ts"), "utf8")
+const pluginSrc = fs.readFileSync(path.join(import.meta.dirname, "..", "tsk.plugin.ts"), "utf8")
 const mod = await import("data:text/javascript;base64," + Buffer.from(pluginSrc).toString("base64"))
 const hooks = await mod.default.server({ directory: proj })
 
@@ -177,7 +177,7 @@ out.push("")
 out.push("**边界案例（诚实记录）：** `wc` 这类输出本身不大（~500 tok）时，毛省仅 ~85%，而深挖单文件行数的一次回读可达原文同量级 → 净收益为负。")
 out.push("结论：压缩收益随输出增大而显著；对小输出，模型的『重跑原命令』比回读更便宜——这是 1600B 阈值存在的意义，也提示深挖回读应优先重跑而非 search 大片段。")
 const md = out.join("\n") + "\n"
-fs.writeFileSync(path.join(import.meta.dirname, "../../docs/NET-BENEFIT-REPORT.md"), md)
+fs.writeFileSync(path.join(import.meta.dirname, "../../../docs/NET-BENEFIT-REPORT.md"), md)
 
 // 控制台打印
 console.log(md)

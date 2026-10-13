@@ -1,7 +1,7 @@
 // TSK × deveco 真实例子收益测试（rtk 式逐命令压缩）。
 // 用真实命令的真实输出，驱动「与 deveco 里加载的同一份」插件 tsk.plugin.ts 的
 // tool.execute.after，量化每命令的 bytes/token 削减，并验证无损回取(.tsk/kb + tsk search)。
-// 运行：bun integration/deveco/rtk-benefit-test.mjs
+// 运行：bun integration/deveco/eval/rtk-benefit-test.mjs
 import { spawnSync } from "node:child_process"
 import fs from "node:fs"
 import os from "node:os"
@@ -49,7 +49,7 @@ const dfOut = run(["df", "-h", "."], proj, true)
 const psOut = (() => { try { return run(["ps", "aux"], os.tmpdir(), true) } catch { return "" } })()
 
 // —— 4. 加载插件（与部署的同一份源码）并驱动 tool.execute.after ——
-const src = fs.readFileSync(path.join(import.meta.dirname, "tsk.plugin.ts"), "utf8")
+const src = fs.readFileSync(path.join(import.meta.dirname, "..", "tsk.plugin.ts"), "utf8")
 const mod = await import("data:text/javascript;base64," + Buffer.from(src).toString("base64"))
 const hooks = await mod.default.server({ directory: proj })
 

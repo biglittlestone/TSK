@@ -1,5 +1,5 @@
 // deveco 任务级端到端收益评测（从 deveco-local.db 提取真实会话，重放 TSK 压缩）。
-// 用法：bun integration/deveco/deveco-db-eval.mjs [deveco-local.db 路径]
+// 用法：bun integration/deveco/eval/deveco-db-eval.mjs [deveco-local.db 路径]
 // 默认 db：codegenie-cli-benchmark 的 deveco-feat-20260701-data。
 // 输出：每任务 saved tok + 端到端百分比（saved / 会话总 input），落 docs/DEVECO-DB-EVAL-REPORT.md
 import { Database } from "bun:sqlite"

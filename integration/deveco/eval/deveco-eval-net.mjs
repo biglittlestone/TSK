@@ -3,7 +3,7 @@
 // 口径：端到端 token 节省 = Σ⌈压缩后/4⌉（含 TSK 包裹头+章节地图）直接统计，回读成本用实测中值说明。
 // 压缩逻辑复刻 tsk.plugin.ts@当前 commit（tool.execute.after 核心），跳过 sandboxRun——
 //   评测集是 off 会话重放，命令的上下文文件系统不在本机，真跑只读命令会得到空结果。
-// 运行：bun integration/deveco/deveco-eval-net.mjs
+// 运行：bun integration/deveco/eval/deveco-eval-net.mjs
 import { spawnSync } from "node:child_process"
 import fs from "node:fs"
 import os from "node:os"
@@ -182,6 +182,6 @@ out.push("")
 out.push("**压缩器状态：** `devecocli docs read`（评测集 bash 主力）已落地 rtk 式语义压缩——保留文档标题/API 签名/参数名:类型，丢正文/说明列/代码块，0 回读。")
 out.push("通用蒸馏已移除：其余未识别命令放行原文（不做丢信息压缩）。剩余 31−13=18 个未触发的大输出是放行的非 devecocli 命令（node/python 等）。")
 const md = out.join("\n") + "\n"
-fs.writeFileSync(path.join(import.meta.dirname, "../../docs/DEVECO-EVAL-NET-REPORT.md"), md)
+fs.writeFileSync(path.join(import.meta.dirname, "../../../docs/DEVECO-EVAL-NET-REPORT.md"), md)
 console.log(md)
 fs.rmSync(TMP, { recursive: true, force: true })
