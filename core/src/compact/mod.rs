@@ -475,6 +475,18 @@ mod t {
         assert!(out.contains("worker-1") && out.contains("worker-10"), "变体表含全部行: {out}");
     }
     #[test]
+    fn log_template_never_folds_across_levels() {
+        // 级别位不允通配：ERROR 行不得并入 INFO run（否则丢失「几条 ERROR」的分组语义）
+        let mut raw = mk(4, &|i| format!("INFO worker-{} processing job {}", i + 1, 42 + i));
+        raw.push_str("\nERROR worker-5 processing job 47");
+        raw.push_str("\nDONE");
+        let out = log_template(&raw);
+        assert!(out.contains("[Template T1: INFO <*> processing job <*>]"), "INFO run 折叠: {out}");
+        assert!(out.contains("ERROR worker-5 processing job 47"), "ERROR 行原样保留: {out}");
+        assert!(out.contains("(4 occurrences)"), "只含 4 条 INFO: {out}");
+        assert!(out.contains("DONE"), "结论原样: {out}");
+    }
+    #[test]
     fn log_template_conservative_when_not_enough_repeats() {
         let raw = "line one\nline two\nline three\nBUILD DONE";
         let out = log_template(raw);

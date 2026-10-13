@@ -78,17 +78,18 @@ console.log("== 净不模拟器 / 网络拦截 ==")
 
 // ===================== tool.execute.after 输出压缩（真实价值机制） =====================
 console.log("== tool.execute.after 输出压缩（opencode 独有、Claude 原生做不到）==")
-// 构造 ~6KB 含大量错误行的构建输出：>800*2 触发；含错误行 → verbose；>5KB 且命令命中 intent → 落盘 KB
+// 构造 ~6KB 含大量错误行的通用工具输出：>800*2 触发；无构建/测试汇总标记（BUILD/Tests/failed），
+// 故不命中任何按输出内容判定的分支 → 验证「未识别命令放行原文、不落 KB」
 {
   const err = Array.from({ length: 40 }, (_, i) => `ERROR build-${i}: cannot resolve module 'x${i}'`).join("\n")
   const noise = Array.from({ length: 2000 }, (_, i) => `step-${String(i).padStart(4, "0")} init worker done queue ${i % 7} take ${i % 3}`).join("\n")
-  const raw = `npm run build\n${noise}\n${err}\n----------\nBUILD FAILED with 40 errors` // ~85KB
+  const raw = `npm run build\n${noise}\n${err}\n----------\nanalysis complete with 40 errors` // ~85KB
   const out = { output: raw }
   await hooks["tool.execute.after"](
-    { tool: "bash", sessionID: "s1", callID: "c4", args: { command: "analyze build log for errors" } },
+    { tool: "bash", sessionID: "s1", callID: "c4", args: { command: "summarize this run log" } },
     out,
   )
-  // 通用蒸馏已移除：未识别命令（analyze build log）→ 放行原文，不做丢信息压缩
+  // 通用蒸馏已移除：未识别命令 → 放行原文，不做丢信息压缩
   ok("未识别命令放行原文（不做丢信息压缩）", out.output === raw)
   ok("未识别命令不落盘 KB", !fs.existsSync(journ) || !fs.readFileSync(journ, "utf8").includes('"sandbox-output"'))
 }

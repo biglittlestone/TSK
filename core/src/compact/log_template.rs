@@ -14,13 +14,29 @@ struct LtRun {
     template: Vec<Option<String>>,
 }
 
-/// 新行是否延续当前 run：token 数相同 + 匹配位置占比 ≥ 相似度阈值（含已有通配位）。
+/// 日志级别词（INFO/WARN/ERROR/...）。级别位被通配会让跨级别行折叠进同一个 run，
+/// 变体表虽保留全部 token 但丢了「几条 ERROR / 几条 INFO」的分组语义——
+/// 对日志分拣（数错误条数）这类端到端任务是信息损失，故级别位不允许通配。
+fn lt_level(t: &str) -> bool {
+    const LEVELS: [&str; 10] = ["TRACE", "DEBUG", "INFO", "NOTICE", "WARN", "WARNING", "ERROR", "ERR", "FATAL", "CRIT"];
+    let u = t.to_uppercase();
+    LEVELS.iter().any(|k| u == *k || u.starts_with(k) || u.starts_with(&format!("[{k}")))
+}
+
+/// 新行是否延续当前 run：token 数相同 + 匹配位置占比 ≥ 相似度阈值（含已有通配位）；
+/// 且级别位不被通配（见 `lt_level`）。
 fn lt_extends(run: &LtRun, tokens: &[&str]) -> bool {
     if tokens.len() != run.template.len() { return false }
     let len = tokens.len() as f32;
-    let matches: usize = tokens.iter().enumerate()
-        .map(|(i, t)| match &run.template[i] { Some(c) if c == t => 1, None => 1, _ => 0 })
-        .sum();
+    let mut matches = 0usize;
+    for (i, t) in tokens.iter().enumerate() {
+        match &run.template[i] {
+            Some(c) if c == t => matches += 1,
+            Some(c) if lt_level(c) || lt_level(t) => return false,
+            None => matches += 1,
+            _ => {}
+        }
+    }
     (matches as f32 / len) >= LT_SIM
 }
 
