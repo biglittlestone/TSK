@@ -34,7 +34,7 @@ bun.lockb
 /_io/
 
 # 案例工作区（生成物，不入仓）
-/integration/deveco/case-library/.work/
+/integration/deveco/case-library/.work*/
 
 /integration/deveco/case-library/.work-ab*/
 
