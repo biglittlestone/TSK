@@ -64,6 +64,8 @@ VERIFY_TAIL=' 最后必须运行 `bash verify.sh`（它会跑后端 bun test 和
 iterations() { if [ -n "$ONLY" ]; then echo "$ONLY"; else seq "$FROM" "$COUNT"; fi; }
 
 for i in $(iterations); do
+  # 可续跑：已有该轮指标则跳过（被系统收割后重跑不丢进度）
+  [ -f "$RUNS/iter-$i.metrics.json" ] && { echo "[iter $i] 已有结果，跳过"; continue; }
   PROMPT="$(prompt_of "$i")"
   TITLE="$(title_of "$i")"
   [ -z "$PROMPT" ] && { echo "[iter $i] backlog 无此条，跳过"; continue; }
