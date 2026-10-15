@@ -37,3 +37,7 @@ bun.lockb
 /integration/deveco/case-library/.work/
 
 /integration/deveco/case-library/.work-ab*/
+
+# 本地工作目录（勿入仓；曾被 seed 误提交卷入过）
+/.workbuddy/
+/tsk_leadership_report/
