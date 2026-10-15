@@ -24,6 +24,13 @@ const CAP_WARN = 10
 const KB_TITLE_PREVIEW = 120          // 检索只回标题 + 120 字符预览
 const SANDBOX_TOOLS = new Set(["bash", "build_project", "arkts_check"])
 
+// —— read-CCR【实验特性，默认关，TSK_READ_CCR=1 开启】——
+// 只对「数据/文档」类文件走 CCR（头部 + 章节地图 + 落盘 KB + tsk search 取回）；
+// 源码（.ts/.ets/.js/.rs…）永不进这条路——要编辑的内容被截断会导致改错（历史失败教训）。
+// 复用已验证的 cat 压缩分支（JSON 键提取 / 日志折叠 / 头尾保留），不新造压缩逻辑。
+const READ_CCR = process.env.TSK_READ_CCR === "1"
+const READ_CCR_EXT = /\.(json|jsonl|csv|tsv|log|md|txt)$/i
+
 // —— 环境清洗：约 70 个危险/敏感环境变量，从子进程.env 中剔除 ——
 const ENV_BLACKLIST = [
   "TSK_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "AZURE_OPENAI_API_KEY", "GOOGLE_API_KEY",
@@ -205,11 +212,15 @@ export default {
         const tool = input?.tool
         // deveco 传给此 hook 的 input: {tool, sessionID, callID, args} —— args 才是工具参数
         const ia = input?.args ?? {}
-        const cmd = typeof ia === "string" ? String(ia)
+        // read-CCR：数据/文档类 read 走 cat 压缩分支（源码不碰）
+        const filePath = String(ia?.filePath ?? ia?.path ?? "")
+        const isReadCCR = tool === "read" && READ_CCR && READ_CCR_EXT.test(filePath)
+        const cmd = isReadCCR ? `cat ${filePath}`
+          : typeof ia === "string" ? String(ia)
           : String(ia?.command ?? ia?.cmd ?? input?.input?.command ?? input?.input?.cmd ?? "")
         const src = typeof output?.output === "string" ? output.output : ""
         let lastSections: string = ""
-        if (!SANDBOX_TOOLS.has(tool)) return
+        if (!SANDBOX_TOOLS.has(tool) && !isReadCCR) return
         // 避免套娃：读 TSK 自身 KB 原文(.tsk/kb/k*.txt / index.json5) → 直通真原文，绝不二次压缩。
         // 回读原文统一走 tsk search(BM25)；cat KB 文件是透明逃逸，不应被再压一次、导致取不回全文。
         if (/\.tsk[\\/]kb[\\/]/.test(cmd)) return

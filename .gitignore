@@ -32,3 +32,8 @@ bun.lockb
 /scenarios/02-library-crud/solution-seed.json
 /scenarios/04-sandbox-doc/verify.mjs
 /_io/
+
+# 案例工作区（生成物，不入仓）
+/integration/deveco/case-library/.work/
+
+/integration/deveco/case-library/.work-ab*/
