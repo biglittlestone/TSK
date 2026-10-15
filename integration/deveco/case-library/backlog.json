@@ -38,5 +38,75 @@
     "id": 8,
     "title": "前端：统一主题 + 借阅记录逾期高亮",
     "prompt": "仓库根目录是图书管理系统（见 SPEC.md）。app/ 各页面的间距、圆角、配色是散落的字面量，风格不统一；借阅记录页对逾期的提示也不够醒目。请：抽出统一主题模块（色板 + 间距常量）并在各页面使用，统一卡片圆角、页面内边距与标题字号；借阅记录页对逾期记录做醒目高亮（颜色 + 文案）。不改变功能。改完在 app/ 下跑 hvigorw assembleHap 确认构建通过。不要启动模拟器。"
+  },
+  {
+    "id": 9,
+    "title": "[issue#4] 修并发重复借出（先复现再修）",
+    "prompt": "仓库根目录是一个图书管理系统（见 SPEC.md 与 ISSUES.md）。server/ 是 Bun+SQLite REST API，app/ 是 HarmonyOS ArkUI 前端，reference/books.json 是书目数据。 用户报 ISSUES.md #4：同一本书能被连续借出两次。请先写一个能稳定复现的用例（连续两次 POST /loans 借同一本，第二次应被拒），确认它现在失败；再定位根因（状态守卫缺失？非事务？）；修到该用例通过，且原有测试仍全绿。修完说明根因。"
+  },
+  {
+    "id": 10,
+    "title": "[issue#6] 删书后借阅记录悬空——定位根因并修",
+    "prompt": "仓库根目录是一个图书管理系统（见 SPEC.md 与 ISSUES.md）。server/ 是 Bun+SQLite REST API，app/ 是 HarmonyOS ArkUI 前端，reference/books.json 是书目数据。 用户报 ISSUES.md #6：删除一本已被借出的书后，借阅记录里还留着它、点进去报错。请复现，然后定位根因（外键缺失？删除未级联？），给出你的修复方案并实施（是禁止删除在借的书，还是级联清理借阅记录——选一种并说明理由）。补用例覆盖该场景。"
+  },
+  {
+    "id": 11,
+    "title": "[回归排查] 借出后列表不刷新是何时引入的",
+    "prompt": "仓库根目录是一个图书管理系统（见 SPEC.md 与 ISSUES.md）。server/ 是 Bun+SQLite REST API，app/ 是 HarmonyOS ArkUI 前端，reference/books.json 是书目数据。 用户报 ISSUES.md #8：借出成功后列表不刷新。请用 git 历史排查——先看 git log / git diff 定位最近哪次改动动过借出流程或列表刷新逻辑，找到引入点后说明，并修复（前端借出成功后应重新拉取/更新列表状态）。不要用 git bisect 之外的破坏性操作。"
+  },
+  {
+    "id": 12,
+    "title": "[逻辑] 逾期当天边界",
+    "prompt": "仓库根目录是一个图书管理系统（见 SPEC.md 与 ISSUES.md）。server/ 是 Bun+SQLite REST API，app/ 是 HarmonyOS ArkUI 前端，reference/books.json 是书目数据。 用户报 ISSUES.md #3：应还日当天就被标成逾期。请修正逾期判定——应还日当天不算逾期，次日才算。补确定性用例（固定当前日期，断言应还日当天 overdue=false、次日 overdue=true）。跑测试到全绿。"
+  },
+  {
+    "id": 13,
+    "title": "[健壮性] 搜索特殊字符转义",
+    "prompt": "仓库根目录是一个图书管理系统（见 SPEC.md 与 ISSUES.md）。server/ 是 Bun+SQLite REST API，app/ 是 HarmonyOS ArkUI 前端，reference/books.json 是书目数据。 用户报 ISSUES.md #7：搜索框输入 % _  等字符时搜不到或报错。请复现，定位（SQL LIKE 通配符未转义？），修复为按字面匹配，并补用例覆盖这些字符。"
+  },
+  {
+    "id": 14,
+    "title": "[性能] 1000+ 书目搜索卡顿",
+    "prompt": "仓库根目录是一个图书管理系统（见 SPEC.md 与 ISSUES.md）。server/ 是 Bun+SQLite REST API，app/ 是 HarmonyOS ArkUI 前端，reference/books.json 是书目数据。 用户报 ISSUES.md #5：书目 1000+ 条时搜索/滚动卡顿。请先量化（对 GET /books 做一次计时，记录搜索 1100 条时的耗时），再优化（建索引 / 避免全表扫描 / 前端防抖），给出前后耗时对比。跑测试到全绿。"
+  },
+  {
+    "id": 15,
+    "title": "[UI 增量] 新增「我的借阅」页",
+    "prompt": "仓库根目录是一个图书管理系统（见 SPEC.md 与 ISSUES.md）。server/ 是 Bun+SQLite REST API，app/ 是 HarmonyOS ArkUI 前端，reference/books.json 是书目数据。 这是一次 UI 增量改造：在现有 app/ 里新增一个页面，按借书人姓名筛选并展示其借阅记录（书名/应还日期，逾期高亮），并注册到 main_pages.json、在首页加入口。不要改动与需求无关的文件。改完在 app/ 下跑 hvigorw assembleHap 确认构建通过。不要启动模拟器。"
+  },
+  {
+    "id": 16,
+    "title": "[重构] 抽出请求校验中间件",
+    "prompt": "仓库根目录是一个图书管理系统（见 SPEC.md 与 ISSUES.md）。server/ 是 Bun+SQLite REST API，app/ 是 HarmonyOS ArkUI 前端，reference/books.json 是书目数据。 server/ 各路由里重复着「字段必填校验」。请做一次不改变对外行为的重构：把校验抽成可复用的中间件/辅助函数，各路由改为调用它。所有现有 API 行为与响应结构不变，测试全绿，不要改测试断言。"
+  },
+  {
+    "id": 17,
+    "title": "[测试补充] 数据访问层单测",
+    "prompt": "仓库根目录是一个图书管理系统（见 SPEC.md 与 ISSUES.md）。server/ 是 Bun+SQLite REST API，app/ 是 HarmonyOS ArkUI 前端，reference/books.json 是书目数据。 为 server/ 的数据访问层（repository/db 相关）补充单元测试，覆盖：查询过滤、分页、创建/更新/删除、借出与归还的状态流转。目标是把这一层的分支覆盖到尽量全。跑 bun test 到全绿。"
+  },
+  {
+    "id": 18,
+    "title": "[代码审查] 审查最近改动并修问题",
+    "prompt": "仓库根目录是一个图书管理系统（见 SPEC.md 与 ISSUES.md）。server/ 是 Bun+SQLite REST API，app/ 是 HarmonyOS ArkUI 前端，reference/books.json 是书目数据。 请以代码审查的视角看最近的改动：用 git log/git diff 查看最近几次提交，逐项检查正确性、边界、错误处理、一致性，列出你发现的问题（按严重度），然后修复其中的真实缺陷。给出「发现→修复」清单。"
+  },
+  {
+    "id": 19,
+    "title": "[安全] 输入校验与加固",
+    "prompt": "仓库根目录是一个图书管理系统（见 SPEC.md 与 ISSUES.md）。server/ 是 Bun+SQLite REST API，app/ 是 HarmonyOS ArkUI 前端，reference/books.json 是书目数据。 对 server/ 做一次安全加固：检查所有接受用户输入的路由，补齐长度/类型/格式校验，防止超长字段、注入类输入、非法状态流转。保持正常请求行为不变，补用例覆盖被拒的非法输入。"
+  },
+  {
+    "id": 20,
+    "title": "[依赖] 升级依赖并修破坏性变更",
+    "prompt": "仓库根目录是一个图书管理系统（见 SPEC.md 与 ISSUES.md）。server/ 是 Bun+SQLite REST API，app/ 是 HarmonyOS ArkUI 前端，reference/books.json 是书目数据。 请检查 server/ 的依赖，把一个依赖升级到更新的版本（如可行），处理随之而来的破坏性变更（API 改名/签名变化），保证测试全绿。若当前无可升级依赖，改为：审视 package.json 与锁文件的一致性并补齐缺失的元信息，说明你的判断依据。"
+  },
+  {
+    "id": 21,
+    "title": "[文档] 补 API 文档与 README",
+    "prompt": "仓库根目录是一个图书管理系统（见 SPEC.md 与 ISSUES.md）。server/ 是 Bun+SQLite REST API，app/ 是 HarmonyOS ArkUI 前端，reference/books.json 是书目数据。 为 server/ 补一份完整的 API 文档（每个端点的 方法/路径/参数/响应/错误码），并更新 README.md 的「后端」一节指向它。文档必须与实现一致——请先读代码确认，不要凭猜。"
+  },
+  {
+    "id": 22,
+    "title": "[代码考古] 说明借还流程的实现",
+    "prompt": "仓库根目录是一个图书管理系统（见 SPEC.md 与 ISSUES.md）。server/ 是 Bun+SQLite REST API，app/ 是 HarmonyOS ArkUI 前端，reference/books.json 是书目数据。 请读代码后产出一份《借还流程实现说明》：从 HTTP 入口到数据落库，逐步说明借出、归还、逾期判定分别在哪、怎么实现、有哪些约束。要求准确到函数/文件，不要臆测。这是一次理解类任务，不需要改代码。"
   }
 ]

@@ -27,11 +27,15 @@ run_arm() { # arm: off|on
   local arm="$1"
   local work="$AB_WORK/$arm"
   echo "############ ARM $arm ############"
-  rm -rf "$work"; mkdir -p "$work"
-  TSK_CASE_WORK="$work" bash ./gen-seed.sh >/dev/null 2>&1 || { echo "gen-seed 失败"; return 1; }
+  # 可续跑：seed 已存在则不重建（被收割后重跑不会丢掉已完成的轮次）
+  if [ ! -d "$work/seed/.git" ]; then
+    rm -rf "$work"; mkdir -p "$work"
+    TSK_CASE_WORK="$work" bash ./gen-seed.sh >/dev/null 2>&1 || { echo "gen-seed 失败"; return 1; }
+  fi
   local flag=""
   [ "$arm" = on ] && flag="1"
   for i in $ROUNDS; do
+    if [ -f "$work/runs/iter-$i.metrics.json" ]; then echo "[$arm] iter $i 已有结果，跳过"; continue; fi
     TSK_CASE_WORK="$work" TSK_READ_CCR="$flag" bash ./run-persistent.sh --only "$i" 2>&1 | grep -E "^\[iter|saved " | sed "s/^/[$arm] /"
   done
   # 独立验收（agent 无关，按 SPEC 契约打 HTTP）

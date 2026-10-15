@@ -9,13 +9,30 @@
 - **只构建，不运行**：前端是 HarmonyOS 应用，模拟器/设备/真机**永久禁用**。前端只做 `hvigorw assembleHap` 构建验证（产 hap）。
 - **GLM-5.1 免费额度 50M tok/日** 是硬约束。
 
+## 场景覆盖（backlog 22 轮）
+
+前 8 轮是"开发新功能"，但真实 agent 工作远不止于此。按业界 agentic benchmark 的分类补全：
+
+| 类 | 轮次 | 场景 | 对齐 benchmark |
+|---|---|---|---|
+| 开发 | 1–8 | 从 0 实现 → 增量功能/性能/重构/UI | devEco `project_bootstrap`；Commit0 |
+| **缺陷** | 9–13 | issue 驱动修复 · 缺陷定位 · **回归排查(git log/bisect)** · 边界逻辑 · 转义健壮性 | SWE-bench（issue→patch）；SWE-smith/BugsInPy/Defects4J（缺陷定位） |
+| **质量** | 14–18 | 性能优化 · **UI 增量** · 重构 · 测试补充 · **代码审查** | devEco `ui_increment`；CR-bench/CodeReviewer |
+| **工程** | 19–21 | **安全加固** · 依赖升级/迁移 · 文档 | RepoAudit/CWE-bench；Terminal-Bench |
+| **理解** | 22 | 代码考古/onboarding | （研读类，read-CCR 主场） |
+
+> `ISSUES.md` 是 issue 素材（8 条报上来的问题，**是报告不是规格**——需自行复现定位）。
+> 轮 11 的回归排查依赖前 10 轮积累的 git 历史。
+
 ## 目录
 
 ```
-gen-seed.sh        生成空白工作区 .work/seed（SPEC.md + reference/books.json + 空 git 仓库）
-template/          起点模板（SPEC.md / reference/books.json / verify.sh）
-backlog.json       优化任务清单（第 1 条=从 0 实现，其余=持续优化）
+gen-seed.sh        生成空白工作区 .work/seed（SPEC.md + ISSUES.md + reference/books.json + 空 git 仓库）
+template/          起点模板
+backlog.json       任务清单（22 轮：开发/缺陷/质量/工程/理解）
 run-persistent.sh  常驻循环驱动（每轮独立 deveco 会话 → 验收 → git 提交 → 归因）
+ab-read-ccr.sh     read-CCR 完成度影响性 A/B
+acceptance/run.mjs 独立验收套件（agent 无关，按 SPEC 契约打 HTTP）
 collect.mjs        逐轮 + 累计收益收集器
 .work/             [生成物] 工作区 seed/ 与运行产物 runs/
 ```
