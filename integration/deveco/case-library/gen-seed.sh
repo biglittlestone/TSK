@@ -4,7 +4,10 @@
 # 用法：bash gen-seed.sh
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-SEED="${TSK_CASE_WORK:-$HERE/.work}/seed"
+WORK="${TSK_CASE_WORK:-$HERE/.work}"
+# 归一为绝对路径（相对路径 + cwd 漂移会让 seed 内 git 提交落进上级仓库，历史教训）
+case "$WORK" in /*) ;; *) WORK="$HERE/$WORK" ;; esac
+SEED="$WORK/seed"
 
 rm -rf "$SEED"
 mkdir -p "$SEED"

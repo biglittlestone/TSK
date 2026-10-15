@@ -134,8 +134,8 @@ if (argv.includes("--report")) {
   md += `- 会话总 input：${totalInput} tok\n`
   md += `- **端到端占比：${totalInput > 0 ? ((totalSaved / totalInput) * 100).toFixed(4) : "0"}%**\n`
 
-  // runs = <repo>/integration/deveco/case-library/.work/runs → 上溯 5 级到仓库根
-  const repoRoot = path.resolve(runs, "..", "..", "..", "..", "..")
+  // 仓库根 = 本文件上溯 3 级（case-library→deveco→integration→TSK），与 runs 目录深度无关
+  const repoRoot = path.resolve(import.meta.dirname, "..", "..", "..")
   const outPath = path.join(process.env.TSK_CASE_REPORT_DIR || path.join(repoRoot, "docs"), "DEVECO-CASE-LIBRARY-REPORT.md")
   fs.mkdirSync(path.dirname(outPath), { recursive: true })
   fs.writeFileSync(outPath, md)

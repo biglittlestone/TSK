@@ -8,12 +8,14 @@
 #   bash run-persistent.sh --model deveco/GLM-5.1
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
-cd "$HERE"                       # 之后一律用相对路径（Git Bash 的 /e/... 路径 node 解析不了）
-
-WORK="${TSK_CASE_WORK:-.work}"
+WORK="${TSK_CASE_WORK:-$HERE/.work}"
+# 归一为绝对路径：相对路径 + cwd 漂移会让 seed 内的 git 提交落进上级仓库（历史教训，勿删）
+case "$WORK" in /*) ;; *) WORK="$HERE/$WORK" ;; esac
 SEED="$WORK/seed"
 RUNS="$WORK/runs"
 JOURNAL="$SEED/.tsk/injections.jsonl"
+[ -d "$SEED/.git" ] || { echo "[fatal] $SEED 不是 git 仓库（工作目录被误设？）" >&2; exit 4; }
+cd "$HERE"  # 之后 node 用相对路径（Git Bash 的 /e/... 绝对路径 node 解析不了）
 COUNT=8
 FROM=1
 ONLY=""
@@ -42,13 +44,13 @@ command -v tsk >/dev/null || { echo "tsk 不在 PATH" >&2; exit 3; }
 command -v deveco >/dev/null || { echo "deveco 不在 PATH" >&2; exit 3; }
 
 # ---- 工作区 ----
-[ -d "$SEED/.git" ] || bash ./gen-seed.sh >/dev/null
+[ -d "$SEED/.git" ] || bash "$HERE/gen-seed.sh" >/dev/null
 mkdir -p "$RUNS"
 touch "$JOURNAL" 2>/dev/null || true   # 追加式：每轮按当前行数取增量，不截断已有记录
 
 # ---- 模拟器看门狗（兜底；插件已拦一层）----
-if [ -f "../benchmark/emulator-watchdog.sh" ]; then
-  bash ../benchmark/emulator-watchdog.sh & WD=$!
+if [ -f "$HERE/../benchmark/emulator-watchdog.sh" ]; then
+  bash "$HERE/../benchmark/emulator-watchdog.sh" & WD=$!
   trap '[ -n "${WD:-}" ] && kill $WD 2>/dev/null' EXIT
 fi
 
