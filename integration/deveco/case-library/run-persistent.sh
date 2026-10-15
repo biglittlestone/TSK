@@ -14,7 +14,6 @@ case "$WORK" in /*) ;; *) WORK="$HERE/$WORK" ;; esac
 SEED="$WORK/seed"
 RUNS="$WORK/runs"
 JOURNAL="$SEED/.tsk/injections.jsonl"
-[ -d "$SEED/.git" ] || { echo "[fatal] $SEED 不是 git 仓库（工作目录被误设？）" >&2; exit 4; }
 cd "$HERE"  # 之后 node 用相对路径（Git Bash 的 /e/... 绝对路径 node 解析不了）
 COUNT=8
 FROM=1
@@ -43,8 +42,9 @@ unset TSK_JOURNAL_DIR
 command -v tsk >/dev/null || { echo "tsk 不在 PATH" >&2; exit 3; }
 command -v deveco >/dev/null || { echo "deveco 不在 PATH" >&2; exit 3; }
 
-# ---- 工作区 ----
-[ -d "$SEED/.git" ] || bash "$HERE/gen-seed.sh" >/dev/null
+# ---- 工作区：先生成（新目录）或沿用；再强校验 .git（任何 git 操作前必须成立，防 add -A 走上库）----
+[ -d "$SEED/.git" ] || bash "$HERE/gen-seed.sh" >/dev/null || true
+[ -d "$SEED/.git" ] || { echo "[fatal] $SEED 不是 git 仓库（gen-seed 失败？）" >&2; exit 4; }
 mkdir -p "$RUNS"
 touch "$JOURNAL" 2>/dev/null || true   # 追加式：每轮按当前行数取增量，不截断已有记录
 
