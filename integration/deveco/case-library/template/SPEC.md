@@ -19,7 +19,8 @@ reference/   books.json —— 数据权威，不要修改
 ## 后端 `server/`
 
 - 运行时：**Bun**（用 `bun:sqlite` 做持久化，`Bun.serve` 起服务）。
-- `package.json` 里提供 `"test": "bun test"`。
+- `package.json` 里提供 `"test": "bun test"` 与 `"start": "bun server.js"`。
+- 启动读环境变量 **`PORT`（默认 3000）** 与 **`DB_PATH`（默认 server 目录下 `library.db`）**——自动化验收依赖它。
 - 表：`books` / `members` / `loans`（字段自定，但需覆盖下面的 API 语义）。
 
 ### REST 端点

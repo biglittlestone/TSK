@@ -19,11 +19,15 @@ const PORT = 3400 + Math.floor(Math.random() * 500)
 const DB = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "libacc-")), "acc.db")
 const proc = spawn("bun", ["server.js"], { cwd: serverDir, env: { ...process.env, PORT: String(PORT), DB_PATH: DB }, stdio: "ignore", shell: true })
 
-const base = `http://127.0.0.1:${PORT}`
+// 端口自适应：实现可能不认 PORT（SPEC 早期未强制），回退探测 3000
+let base = `http://127.0.0.1:${PORT}`
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+async function reachable(b) { try { const r = await fetch(b + "/books"); return r.ok || r.status === 404 } catch { return false } }
 async function up() {
   for (let i = 0; i < 60; i++) {
-    try { const r = await fetch(base + "/books"); if (r.ok || r.status === 404) return true } catch { /* not yet */ }
+    if (await reachable(base)) return true
+    const alt = "http://127.0.0.1:3000"
+    if (base !== alt && await reachable(alt)) { base = alt; return true }
     await sleep(250)
   }
   return false
@@ -65,7 +69,10 @@ try {
   ok("借期 = 今天 + 14 天（opt-4）", diffDays === 14, `due=${due} today=${today} diff=${diffDays}`)
 
   const book = await api("GET", `/books/${bid}`)
-  ok("借出后书状态 borrowed + 借书人", book.json?.status === "borrowed" && book.json?.borrower === "读者X", JSON.stringify(book.json)?.slice(0, 90))
+  // SPEC 只要求书置为 borrowed（borrower 字段可选）→ 容忍借书人记在书或借阅记录上
+  const borrowerOnBook = book.json?.borrower ?? book.json?.borrowedBy ?? book.json?.borrowerName
+  ok("借出后书状态 borrowed（opt-3 前置）", book.json?.status === "borrowed" || book.json?.state === "borrowed", JSON.stringify(book.json)?.slice(0, 90))
+  ok("借书人已登记（书或借阅记录）", borrowerOnBook === "读者X" || loan.json?.member === "读者X" || loan.json?.borrower === "读者X", JSON.stringify(book.json)?.slice(0, 90))
 
   const dup = await api("POST", "/loans", { bookId: bid, member: "读者Y" })
   ok("同一本再借 → 409（opt-3）", dup.status === 409, `got ${dup.status}`)
