@@ -88,9 +88,10 @@ for i in $(iterations); do
     ( cd "$SEED" && deveco export "$SID" ) > "$RUNS/export-$i.json" 2>/dev/null || true
   fi
 
-  # 3) 验收
+  # 3) 验收（deveco 失败/超时 → 强制验收失败，防止「无改动→verify 放行」的假阳性）
   VERIFY_OUT="$(bash "$SEED/verify.sh" 2>&1 | tail -1)"
   bash "$SEED/verify.sh" >/dev/null 2>&1; VERIFY_RC=$?
+  if [ "$RC" != 0 ]; then VERIFY_RC=1; VERIFY_OUT="deveco rc=$RC（会话失败/被挡），$VERIFY_OUT"; fi
   echo "[iter $i] $VERIFY_OUT (rc=$VERIFY_RC)"
 
   # 4) 提交（保留可回滚节点）
