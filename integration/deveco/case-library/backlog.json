@@ -108,5 +108,50 @@
     "id": 22,
     "title": "[代码考古] 说明借还流程的实现",
     "prompt": "仓库根目录是一个图书管理系统（见 SPEC.md 与 ISSUES.md）。server/ 是 Bun+SQLite REST API，app/ 是 HarmonyOS ArkUI 前端，reference/books.json 是书目数据。 请读代码后产出一份《借还流程实现说明》：从 HTTP 入口到数据落库，逐步说明借出、归还、逾期判定分别在哪、怎么实现、有哪些约束。要求准确到函数/文件，不要臆测。这是一次理解类任务，不需要改代码。"
+  },
+  {
+    "id": 23,
+    "title": "[全库代码审查] 审 server.js 与全部前端页面",
+    "prompt": "仓库根目录是一个图书管理系统（见 SPEC.md 与 ISSUES.md）。server/ 是 Bun+SQLite REST API，app/ 是 HarmonyOS ArkUI 前端，reference/books.json 是书目数据。请以全库代码审查的视角做一次彻底审查，范围是全部代码而不只是最近改动：先完整读完 server/server.js（含它导出的数据访问层），再读 server/test/ 下全部测试，再读完 app/entry/src/main/ets/ 下 common/ 与 pages/ 的每一个文件。逐项检查正确性、边界条件、错误处理、状态一致性、以及前后端契约是否对齐（后端返回的字段前端是否都在用、前端提交的字段后端是否都校验了）。用 git diff 与 git log 确认当前工作区相对 HEAD 没有遗留半成品。按严重度列出你发现的问题清单，然后修复其中真实存在的缺陷，补用例覆盖。给出「发现→修复」清单。"
+  },
+  {
+    "id": 24,
+    "title": "[大重构] server.js 从单文件拆成多模块",
+    "prompt": "仓库根目录是一个图书管理系统（见 SPEC.md 与 ISSUES.md）。server/ 是 Bun+SQLite REST API，app/ 是 HarmonyOS ArkUI 前端，reference/books.json 是书目数据。server/server.js 目前把 schema 建表、种子数据、输入校验、业务编排、HTTP 路由全部塞在同一个约 567 行的文件里。请做一次不改变对外行为的重构：按职责拆成多个模块（例如 db.js 管连接与建表、validators.js 管输入校验、repository.js 管数据访问、routes.js 管 HTTP 路由），server.js 保留为薄入口。拆分前先用 grep 列出 server.js 内所有函数定义与导出项，作为拆分基线；拆完用 git diff 逐段核对每一处移动是否等价、有没有丢掉行为。所有现有 API 行为与响应结构必须不变，server/test/ 下的测试文件与断言一律不得修改且必须全绿。不要动前端。"
+  },
+  {
+    "id": 25,
+    "title": "[前端重构] 抽取可复用组件供 5 个页面共用",
+    "prompt": "仓库根目录是一个图书管理系统（见 SPEC.md 与 ISSUES.md）。server/ 是 Bun+SQLite REST API，app/ 是 HarmonyOS ArkUI 前端，reference/books.json 是书目数据。app/entry/src/main/ets/pages/ 下的 5 个页面（Index、BookListPage、BookDetailPage、LoanListPage、BorrowerLoansPage）各自重复实现着列表渲染、分页按钮、空态与加载态、借出表单校验、逾期高亮。请抽出一层可复用组件（例如列表、分页器、空态、借出表单、逾期标记），让 5 个页面改为引用它们，消除重复。抽取前先把 5 个页面完整读一遍并标出重复片段，抽完用 git diff 核对每个页面行为是否等价。不改变任何页面功能与视觉语义。"
+  },
+  {
+    "id": 26,
+    "title": "[跨层重构] server 与 app 共用类型与常量",
+    "prompt": "仓库根目录是一个图书管理系统（见 SPEC.md 与 ISSUES.md）。server/ 是 Bun+SQLite REST API，app/ 是 HarmonyOS ArkUI 前端，reference/books.json 是书目数据。目前 server/ 与 app/ 各自硬编码 ISBN 格式规则、借期天数 14、图书状态枚举 in 与 borrowed、图书与借阅记录的字段结构，两边没有任何共享定义，一旦改动极易漂移。请新建 shared/ 目录放一份两端共同引用的定义（借期天数、状态枚举、ISBN 格式规则、图书与借阅记录的字段结构），server/ 与 app/ 都改为引用它，消除两端重复。改动前先用 grep -rn 找出所有硬编码的 14、borrowed、in 以及 ISBN 相关字面量，先列出现状清单再动手。所有 API 行为与前端功能不变，后端测试全绿，前端能构建出 hap。"
+  },
+  {
+    "id": 27,
+    "title": "[数据质量] 全量审计 reference/books.json 并修 ISBN 搜索",
+    "prompt": "仓库根目录是一个图书管理系统（见 SPEC.md 与 ISSUES.md）。server/ 是 Bun+SQLite REST API，app/ 是 HarmonyOS ArkUI 前端，reference/books.json 是书目数据。用户报 ISSUES.md #2：ISBN 978-7-5366-9293-0 这种带连字符的 ISBN 搜不到。而 reference/books.json 约 294 KB、1100 条书目，是唯一的数据权威。请先用 grep 或 jq 全量扫描 reference/books.json，统计出：ISBN 带连字符与不带连字符的记录各多少条、dueDate 年份不足 4 位（例如 202-01-01 这种三位年）的记录有多少条并列出全部样本、以及其他你能发现的字段异常（空值、超长、类型不符、重复 ISBN）。把统计结果与样本完整贴出来。然后实现 ISBN 搜索归一化：让带连字符与不带连字符的 ISBN 都能搜到同一本书，并补测试覆盖带连字符、不带连字符、全角字符、前后空格等多种写法。注意：不要直接改动 reference/books.json 这个权威数据文件，归一化逻辑要在服务端搜索路径上做。"
+  },
+  {
+    "id": 28,
+    "title": "[集成测试] 补端到端数据流转测试套件",
+    "prompt": "仓库根目录是一个图书管理系统（见 SPEC.md 与 ISSUES.md）。server/ 是 Bun+SQLite REST API，app/ 是 HarmonyOS ArkUI 前端，reference/books.json 是书目数据。server/test/ 目前只有单元测试，缺少覆盖真实数据流转的端到端集成测试。请新增一个集成测试套件，用真实 SQLite 数据库串起来完整跑一遍：建书、借出、归还、再借出、并发借同一本书、删除已借出的书、查询借阅记录，逐步断言状态流转是否正确、错误码是否为预期的 400 与 409、借期是否恰好 14 天、归还是否幂等。新增套件必须与现有单元测试共存且全部全绿，跑全量测试并把输出贴出来。"
+  },
+  {
+    "id": 29,
+    "title": "[代码审计] 全库扫描外部输入路径与危险模式",
+    "prompt": "仓库根目录是一个图书管理系统（见 SPEC.md 与 ISSUES.md）。server/ 是 Bun+SQLite REST API，app/ 是 HarmonyOS ArkUI 前端，reference/books.json 是书目数据。请以安全审计的视角对 server/ 做全库扫描：用 grep -rn 分别找出所有接受外部输入的入口、所有直接拼 SQL 的地方、所有未校验就落库的字段、所有异常被静默吞掉的位置（空 catch、吞错写法、用默认值掩盖错误）。把每一类的命中位置完整贴出来，带文件名与行号，逐条判定是真问题还是误报并说明理由，然后修复确认为真问题的项，补用例覆盖被拒的非法输入。保持正常请求行为不变。"
+  },
+  {
+    "id": 30,
+    "title": "[架构文档] 全模块架构说明（数据模型与状态机）",
+    "prompt": "仓库根目录是一个图书管理系统（见 SPEC.md 与 ISSUES.md）。server/ 是 Bun+SQLite REST API，app/ 是 HarmonyOS ArkUI 前端，reference/books.json 是书目数据。请产出一份《系统架构说明》，覆盖四块：数据模型（books 与 loans 等表的字段、关系与约束，用文本 ER 图表示）；借还状态机（状态从 in 到 borrowed 再回到 in 的完整流转、每一步的约束与错误码）；前端数据流（5 个页面分别调哪些接口、页面之间如何传递状态、HttpClient 与主题模块各负什么责）；以及前后端契约是否对齐。要求准确到文件与函数，必须逐个读完 server/ 与 app/ 下所有源码后再动笔，不要臆测。写成 ARCHITECTURE.md 放到仓库根目录，文档必须与实现一致。"
+  },
+  {
+    "id": 31,
+    "title": "[git 全史考古] 借阅逻辑的完整演变史",
+    "prompt": "仓库根目录是一个图书管理系统（见 SPEC.md 与 ISSUES.md）。server/ 是 Bun+SQLite REST API，app/ 是 HarmonyOS ArkUI 前端，reference/books.json 是书目数据。这个仓库已累积 27 个以上提交（从 opt-1 到当前），完整记录了系统从 0 到现在的每一步。请做一次 git 全史考古：先用 git log --stat 看整体提交脉络，再用 git show 与 git log -p 逐个读提交，重点追踪借阅相关逻辑（借出、归还、逾期判定、状态守卫、事务）在哪些提交里被引入、被改坏、又被修好，画出这条逻辑的完整演变史，形式为「提交号 → 当时改了什么 → 为什么改」。产出一份《借阅逻辑演变史》文档，每个结论都要能指到具体提交，不要臆测。这是一次理解类任务，不需要改代码。"
   }
 ]

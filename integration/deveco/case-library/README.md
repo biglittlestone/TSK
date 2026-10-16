@@ -9,7 +9,7 @@
 - **只构建，不运行**：前端是 HarmonyOS 应用，模拟器/设备/真机**永久禁用**。前端只做 `hvigorw assembleHap` 构建验证（产 hap）。
 - **GLM-5.1 免费额度 50M tok/日** 是硬约束。
 
-## 场景覆盖（backlog 22 轮）
+## 场景覆盖（backlog 31 轮）
 
 前 8 轮是"开发新功能"，但真实 agent 工作远不止于此。按业界 agentic benchmark 的分类补全：
 
@@ -19,7 +19,30 @@
 | **缺陷** | 9–13 | issue 驱动修复 · 缺陷定位 · **回归排查(git log/bisect)** · 边界逻辑 · 转义健壮性 | SWE-bench（issue→patch）；SWE-smith/BugsInPy/Defects4J（缺陷定位） |
 | **质量** | 14–18 | 性能优化 · **UI 增量** · 重构 · 测试补充 · **代码审查** | devEco `ui_increment`；CR-bench/CodeReviewer |
 | **工程** | 19–21 | **安全加固** · 依赖升级/迁移 · 文档 | RepoAudit/CWE-bench；Terminal-Bench |
-| **理解** | 22 | 代码考古/onboarding | （研读类，read-CCR 主场） |
+| **理解** | 22 | 代码考古/onboarding | （研读类） |
+| **全库审查** | 23 | **全库代码审查**（审 server.js 全部 567 行 + app 全部 5 页，非仅最近改动） | CodeReviewer/CR-bench 全库模式 |
+| **大重构** | 24–26 | **单文件拆多模块**（567 行 → db/validators/repository/routes）· **前端组件层抽取** · **server+app 共用类型常量**（新建 shared/） | Commit0/SWE-gym 跨文件重构 |
+| **数据质量** | 27 | **全量审计 294KB books.json**（ISBN 连字符/三位年 dueDate 统计+样本）+ 实现 issue#2 ISBN 归一化 | DABench/数据治理；issue→patch |
+| **测试** | 28 | 端到端集成测试套件（借→归还→并发→删书全链） | SWE-bench test 完备性 |
+| **安全** | 29 | **grep 全库输入路径与危险模式**（拼 SQL/未校验落库/静默吞错）并修 | CWE-bench/RepoAudit 扫描模式 |
+| **理解** | 30–31 | 全模块架构文档（ER+状态机+前端数据流）· **git 全史考古**（27+ 提交追踪借阅逻辑演变） | onboarding；代码考古 |
+
+> `ISSUES.md` 是 issue 素材（8 条报上来的问题，**是报告不是规格**——需自行复现定位）。轮 11 的回归排查依赖前 10 轮积累的 git 历史；轮 31 的全史考古依赖**全部** 31 轮前的历史，因此放在最后。
+
+### 为什么 23–31 轮是"高收益"设计
+
+TSK 的 saved 只来自**被压缩的大工具输出**（输出 >1600 字符 + 命令被识别，或 hvigor/bun test 构建标记）。2–7 轮收益为 0、小改轮恒 ~437，就是因为那些轮次几乎没有大输出。**23–31 轮每轮都按机制反向设计成"必然产生大输出"**：
+
+| 轮 | 主打杠杆 | 对照历史量级 |
+|---|---|---|
+| 23 | 多文件整读 + `git diff` | 轮 18 审查 26,452 |
+| 24–26 | 跨文件**大 diff** + 反复跑测试/构建 | 轮 16 重构 11,864 · 轮 8 构建 19,521 |
+| 27 | **大文件整读/grep 大输出**（294KB，头号杠杆） | 读一遍 ≈ 70k tok 量级 |
+| 28 | `bun test` 大输出 | 测试类 |
+| 29 | `grep -rn` 全库大输出 | grep 类 |
+| 30–31 | 多文件整读 / **纯 diff 挖掘** | 轮 22 考古 5,372 · 轮 11 回归 8,459 |
+
+排序上 git 历史只增不减，diff/考古轮越靠后 diff 越大 → 考古类（31）压轴。
 
 > `ISSUES.md` 是 issue 素材（8 条报上来的问题，**是报告不是规格**——需自行复现定位）。
 > 轮 11 的回归排查依赖前 10 轮积累的 git 历史。
@@ -29,7 +52,7 @@
 ```
 gen-seed.sh        生成空白工作区 .work/seed（SPEC.md + ISSUES.md + reference/books.json + 空 git 仓库）
 template/          起点模板
-backlog.json       任务清单（22 轮：开发/缺陷/质量/工程/理解）
+backlog.json       任务清单（31 轮：开发/缺陷/质量/工程/理解 + 23-31 高收益轮）
 run-persistent.sh  常驻循环驱动（每轮独立 deveco 会话 → 验收 → git 提交 → 归因）
 ab-read-ccr.sh     read-CCR 完成度影响性 A/B
 acceptance/run.mjs 独立验收套件（agent 无关，按 SPEC 契约打 HTTP）

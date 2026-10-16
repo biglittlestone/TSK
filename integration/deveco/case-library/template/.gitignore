@@ -1,2 +1,7 @@
 # TSK 运行时产物（journal/KB），不入仓
 .tsk/
+
+# 运行时 SQLite 产物（bun test / 构建会改写），不入仓
+server/library.db
+server/library.db-shm
+server/library.db-wal
