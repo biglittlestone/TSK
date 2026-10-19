@@ -279,11 +279,12 @@ pub fn compact_by_command(cmd: &str, raw: &str) -> Option<String> {
             }
             // 3) Get-ChildItem -Recurse：全路径列表（find 语义）
             if l.contains("recurse") {
+                let re_win_path = Regex::new(r"(?i)^([a-z]:\\|\\\\)").unwrap();
                 let paths: Vec<String> = lines.iter()
                     .filter(|x| {
                         let t = x.trim();
                         !t.is_empty() && !t.starts_with('-') && !t.starts_with("FullName")
-                            && t.contains('\\') && t.starts_with('C')
+                            && re_win_path.is_match(t)
                     })
                     .map(|x| x.trim().to_string())
                     .collect();
@@ -293,8 +294,16 @@ pub fn compact_by_command(cmd: &str, raw: &str) -> Option<String> {
                     return Some(format!("{} files:\n{h}{more}", paths.len()));
                 }
             }
-            // 4) Get-ChildItem / gci / dir：ls 语义（只保留 Mode 数据行，跳表头/分隔线/目录标题）
-            if l.contains("get-childitem") || first == "gci" || first == "dir" {
+            // 4) Get-ChildItem / gci / dir / Get-Item：ls 语义（只保留 Mode 数据行，跳表头/分隔线/目录标题）
+            if l.contains("get-childitem") || l.contains("get-item") || first == "gci" || first == "dir" {
+                // -Name：输出每行即文件名（无 Mode 表）→ 直接当列表
+                if l.contains("-name") {
+                    let items: Vec<String> = lines.iter().map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect();
+                    if !items.is_empty() {
+                        let more = if items.len() > CAP_LIST { format!("\n… +{} more", items.len() - CAP_LIST) } else { String::new() };
+                        return Some(format!("{} items:\n{}{}", items.len(), head(&items, CAP_LIST), more));
+                    }
+                }
                 let names: Vec<String> = lines.iter()
                     .filter_map(|x| {
                         let t = x.trim();
@@ -325,6 +334,54 @@ pub fn compact_by_command(cmd: &str, raw: &str) -> Option<String> {
                     return Some(format!("grep ({} matches):\n{h}{more}", rows.len()));
                 }
             }
+            // 6) Get-WinEvent / Get-EventLog：事件日志表（保留事件头 + 数据行，Message 截断）
+            if l.contains("get-winevent") || l.contains("get-eventlog") {
+                let hdr: Vec<String> = lines.iter()
+                    .filter(|x| {
+                        let t = x.trim();
+                        t.starts_with("ProviderName:") || t.starts_with("TimeCreated") || t.starts_with("LogName")
+                            || t.starts_with("MachineName") || t.starts_with("Index")
+                    })
+                    .map(|x| x.trim().to_string()).collect();
+                let rows: Vec<String> = lines.iter()
+                    .filter(|x| {
+                        let t = x.trim();
+                        !t.is_empty() && !t.starts_with('-') && !t.starts_with("ProviderName:") && !t.starts_with("TimeCreated")
+                            && !t.starts_with("LogName") && !t.starts_with("MachineName") && !t.starts_with("Index")
+                    })
+                    .map(|x| {
+                        let t = x.trim();
+                        if t.chars().count() > 160 { format!("{}…", t.chars().take(160).collect::<String>()) } else { t.to_string() }
+                    })
+                    .collect();
+                if !rows.is_empty() {
+                    let h = hdr.iter().take(4).cloned().collect::<Vec<_>>().join("\n");
+                    let more = if rows.len() > CAP_ERR { format!("\n… +{} more", rows.len() - CAP_ERR) } else { String::new() };
+                    return Some(format!("events ({} 条):\n{h}\n{}{}", rows.len(), head(&rows, CAP_ERR), more));
+                }
+            }
+            // 7) 通用 PS 表格兜底：表头 + 多列破折号分隔线 + 数据行 → 表头 + 前 CAP_LIST 行。
+            //    一条规则覆盖所有未枚举 cmdlet（Get-Service/Get-Command/Get-Member/Get-ItemProperty/
+            //    Get-NetTCPConnection/Get-Volume…）。必须有「≥2 段破折号的分隔线」才触发，避免误伤普通文本；
+            //    Get-Content 走下方 cat 分支，不在此列。
+            if !l.contains("get-content") && first != "gc" && first != "cat" {
+                let re_sep = Regex::new(r"^-{2,}(\s+-{2,})+$").unwrap();
+                if let Some(sep) = lines.iter().position(|x| re_sep.is_match(x.trim())) {
+                    if sep >= 1 {
+                        let header = lines[sep - 1].trim().to_string();
+                        let rows: Vec<String> = lines[sep + 1..].iter()
+                            .map(|x| {
+                                let t = x.trim();
+                                if t.chars().count() > 200 { format!("{}…", t.chars().take(200).collect::<String>()) } else { t.to_string() }
+                            })
+                            .collect();
+                        if rows.len() > 1 {
+                            let more = if rows.len() > CAP_LIST { format!("\n… +{} more", rows.len() - CAP_LIST) } else { String::new() };
+                            return Some(format!("ps table ({} 行):\n{header}\n{}{}", rows.len(), head(&rows, CAP_LIST), more));
+                        }
+                    }
+                }
+            }
             // Get-Content / gc：cat 语义 → 走下方 cat 大输出分支
         }
     }
@@ -348,6 +405,59 @@ pub fn compact_by_command(cmd: &str, raw: &str) -> Option<String> {
             if keys.is_empty() { String::new() } else { format!("\nJSON 键 ({}): {}", keys.len().min(40), keys.iter().take(40).cloned().collect::<Vec<_>>().join(" ")) }
         } else { String::new() };
         return Some(format!("cat ({} B)：\n头部:\n{h}\n…\n尾部:\n{t}{keyline}", raw.len()));
+    }
+    // ---- macOS：xcodebuild / log show / brew / system_profiler ----
+    // xcodebuild 走内容判定（Xcode 拼写是 BUILD SUCCEEDED，与 hvigor 的 BUILD SUCCESSFUL 区分）
+    {
+        let l = cmd.to_lowercase();
+        let first = l.split_whitespace().next().unwrap_or("");
+        // xcodebuild：镜像 hvigor——保留 BUILD 结论 + 编译步骤 + error/warning 行
+        if l.contains("xcodebuild") || raw.contains("BUILD SUCCEEDED") || raw.contains("CompileSwift")
+            || raw.contains("CompileC") || raw.contains("** BUILD")
+        {
+            let steps = lines.iter().filter(|x| x.contains("CompileSwift") || x.contains("CompileC")
+                || x.starts_with("Ld ") || x.contains("CodeSign")).count();
+            let status: Vec<String> = lines.iter()
+                .filter(|x| x.contains("BUILD SUCCEEDED") || x.contains("BUILD FAILED") || x.contains("** BUILD"))
+                .map(|x| strip_ansi(x)).collect();
+            let re_err = Regex::new(r"(?i)\berror:|\bwarning:|fatal error").unwrap();
+            let fails: Vec<String> = lines.iter().filter(|x| re_err.is_match(x)).map(|x| strip_ansi(x)).collect();
+            if !status.is_empty() || !fails.is_empty() {
+                let tail: Vec<String> = status.iter().rev().take(6).cloned().collect::<Vec<_>>().into_iter().rev().collect();
+                let fails_shown = if fails.is_empty() { String::new() } else { format!("\nfailures:\n{}", fails.iter().take(CAP_ERR).cloned().collect::<Vec<_>>().join("\n")) };
+                return Some(format!("xcodebuild ({} 步, {} 错误):\n{}{}", steps, fails.len(), tail.join("\n"), fails_shown));
+            }
+        }
+        // log show：macOS 统一日志（巨大）→ 只留 error/fault 行
+        if first == "log" && l.contains("show") {
+            let errs: Vec<String> = lines.iter()
+                .filter(|x| x.contains(" Error ") || x.contains(" Fault ") || x.contains("Error:") || x.contains("Fault:"))
+                .map(|x| x.to_string()).collect();
+            if !errs.is_empty() {
+                return Some(format!("log show ({} 行, {} error/fault):\n{}", lines.len(), errs.len(), head(&errs, CAP_ERR)));
+            }
+        }
+        // brew list / outdated / info
+        if first == "brew" {
+            if let Some(i) = lines.iter().position(|x| x.trim().starts_with("Name") && x.contains("Current")) {
+                let rows: Vec<String> = lines[i + 1..].iter().filter(|x| !x.trim().starts_with('-')).map(|x| x.to_string()).collect();
+                if rows.len() > 1 {
+                    let more = if rows.len() > CAP_LIST { format!("\n… +{} more", rows.len() - CAP_LIST) } else { String::new() };
+                    return Some(format!("brew ({} 个):\n{}\n{}{}", rows.len(), lines[i].trim(), head(&rows, CAP_LIST), more));
+                }
+            } else if lines.len() > CAP_LIST {
+                return Some(format!("brew ({} 个):\n{}", lines.len(), head(&lines, CAP_LIST)));
+            }
+        }
+        // system_profiler：巨型 kv → 保留段头 + 前 N 行
+        if first == "system_profiler" {
+            let heads: Vec<String> = lines.iter()
+                .filter(|x| x.trim().ends_with(':') && !x.starts_with(' '))
+                .map(|x| x.trim().to_string()).collect();
+            if !heads.is_empty() {
+                return Some(format!("system_profiler ({} 段):\n{}", heads.len(), head(&heads, CAP_LIST)));
+            }
+        }
     }
     // ---- hvigor 构建日志（export … && node … 输出）：保留 BUILD 结论 + 错误行 + 步数 ----
     // 构建结论在尾部（BUILD SUCCESSFUL/FAILED）+ 错误行 → 模型完成构建确认/排查 0 回读；深挖堆栈走章节地图。
@@ -378,6 +488,19 @@ pub fn compact_by_command(cmd: &str, raw: &str) -> Option<String> {
         if !summary.is_empty() { parts.push(summary.join("\n")) }
         if !fails.is_empty() { parts.push(format!("failures ({} shown):\n{}", fails.len(), fails.join("\n"))) }
         if !parts.is_empty() { return Some(parts.join("\n\n")) }
+    }
+    // ---- 编译器错误（clang/gcc/swift/rustc）：内容判定，保留错误/警告行 + 计数 ----
+    // 要求结构化诊断（path:line:col: error:），避免误伤普通含 error 字样的文本。
+    {
+        let re_diag = Regex::new(r"^\s*[^:\n]+:\d+(?::\d+)?:\s*(?i:error|warning|note|fatal error):").unwrap();
+        let re_rustc = Regex::new(r"^error(\[E\d+\])?:").unwrap();
+        let errs: Vec<String> = lines.iter()
+            .filter(|x| (re_diag.is_match(x) && x.to_lowercase().contains("error")) || re_rustc.is_match(x.trim()))
+            .map(|x| x.trim().to_string()).collect();
+        let warns = lines.iter().filter(|x| re_diag.is_match(x) && x.to_lowercase().contains("warning")).count();
+        if !errs.is_empty() {
+            return Some(format!("compile ({} errors, {} warnings):\n{}", errs.len(), warns, head(&errs, CAP_ERR)));
+        }
     }
     None
 }
@@ -518,5 +641,93 @@ mod t {
         let out = compact_by_command("devecocli docs read X", &raw).unwrap();
         assert!(out.contains("range: string[] | string[][]10+ | Resource"), "类型 union 保留: {out}");
         assert!(!out.contains("选择列表"), "说明丢弃: {out}");
+    }
+    // ---- PowerShell 扩展 ----
+    #[test]
+    fn ps_generic_table_capped() {
+        let mut raw = String::from("Status   Name               DisplayName\n------   ----               -----------\n");
+        for i in 0..30 { raw.push_str(&format!("Running  svc{i}  Service {i}\n")); }
+        let out = compact_by_command("Get-Service", &raw).unwrap();
+        assert!(out.contains("ps table (30 行):"), "got: {out}");
+        assert!(out.contains("Status") && out.contains("DisplayName"), "表头保留: {out}");
+        assert!(out.contains("svc0") && out.contains("+10 more"), "cap: {out}");
+    }
+    #[test]
+    fn ps_generic_table_not_plain_text() {
+        // 普通文本无「多列破折号分隔线」→ 不触发
+        let raw = "line one\nline two\n- single dash\nline four";
+        assert!(compact_by_command("Get-ItemProperty X", &raw).is_none(), "不应误触发普通文本");
+    }
+    #[test]
+    fn ps_get_winevent_truncates_message() {
+        let long = "x".repeat(300);
+        let raw = format!("ProviderName: TestProv\nTimeCreated  Id  LevelDisplayName  Message\n--------\n2026-01-01  1  Error  {long}\n2026-01-02  2  Error  short");
+        let out = compact_by_command("Get-WinEvent -LogName System", &raw).unwrap();
+        assert!(out.contains("events (2 条):"), "got: {out}");
+        assert!(out.contains("ProviderName: TestProv"), "事件头保留: {out}");
+        assert!(out.contains("…"), "长 Message 截断: {out}");
+        assert!(!out.contains(&long), "超长原文不保留: {out}");
+    }
+    #[test]
+    fn ps_recurse_any_drive() {
+        let raw = "C:\\a\\b.txt\nD:\\proj\\src\\c.txt\n\\\\server\\share\\d.txt\nE:\\e.txt";
+        let out = compact_by_command("Get-ChildItem -Recurse", &raw).unwrap();
+        assert!(out.contains("4 files:"), "got: {out}");
+        assert!(out.contains("D:\\proj\\src\\c.txt") && out.contains("\\\\server\\share\\d.txt"), "D 盘/UNC 保留: {out}");
+    }
+    #[test]
+    fn ps_gci_name_variant() {
+        let raw = "file1.txt\nfile2.txt\nsubdir";
+        let out = compact_by_command("Get-ChildItem -Name", &raw).unwrap();
+        assert!(out.contains("3 items:"), "got: {out}");
+        assert!(out.contains("file1.txt"), "got: {out}");
+    }
+    // ---- macOS（构造样例，本机无 mac 环境）----
+    #[test]
+    fn mac_xcodebuild_keeps_conclusion() {
+        let raw = "CompileSwift normal arm64 /proj/Foo.swift\nCompileSwift normal arm64 /proj/Bar.swift\nLd /proj/build/App normal\n/Users/x/Foo.swift:12:5: error: cannot find 'bar' in scope\n** BUILD FAILED **";
+        let out = compact_by_command("xcodebuild -scheme App build", &raw).unwrap();
+        assert!(out.contains("xcodebuild ("), "got: {out}");
+        assert!(out.contains("BUILD FAILED"), "结论保留: {out}");
+        assert!(out.contains("error: cannot find"), "错误行保留: {out}");
+    }
+    #[test]
+    fn mac_xcodebuild_success_drops_progress() {
+        let raw = "CompileSwift /proj/A.swift\nCompileSwift /proj/B.swift\n** BUILD SUCCEEDED **";
+        let out = compact_by_command("xcodebuild build", &raw).unwrap();
+        assert!(out.contains("BUILD SUCCEEDED"), "got: {out}");
+        assert!(!out.contains("CompileSwift"), "进度噪音丢弃: {out}");
+    }
+    #[test]
+    fn mac_log_show_filters_errors() {
+        let raw = "2026-01-01 10:00:00 Info  normal line\n2026-01-01 10:00:01 Error  something failed\n2026-01-01 10:00:02 Default another\n2026-01-01 10:00:03 Fault  serious";
+        let out = compact_by_command("log show --last 1h", &raw).unwrap();
+        assert!(out.contains("log show (4 行, 2 error/fault):"), "got: {out}");
+        assert!(out.contains("something failed") && out.contains("serious"), "错误行保留: {out}");
+        assert!(!out.contains("normal line"), "info 行丢弃: {out}");
+    }
+    #[test]
+    fn mac_brew_outdated_table() {
+        let mut raw = String::from("Name   Installed  Current\n------ --------- -------\n");
+        for i in 0..25 { raw.push_str(&format!("pkg{i}  1.0 2.0\n")); }
+        let out = compact_by_command("brew outdated", &raw).unwrap();
+        assert!(out.contains("brew (25 个):"), "got: {out}");
+        assert!(out.contains("pkg0") && out.contains("+5 more"), "cap: {out}");
+    }
+    #[test]
+    fn mac_system_profiler_sections() {
+        let raw = "Hardware:\n    Model Name: MacBook\n    Chip: M3\nSoftware:\n    System Version: 14.0\nNetwork:";
+        let out = compact_by_command("system_profiler SPHardwareDataType", &raw).unwrap();
+        assert!(out.contains("system_profiler (3 段):"), "got: {out}");
+        assert!(out.contains("Hardware:") && out.contains("Network:"), "got: {out}");
+    }
+    // ---- 共享：编译器错误 ----
+    #[test]
+    fn compiler_errors_clang() {
+        let raw = "src/a.c:3:5: error: use of undeclared identifier 'x'\nsrc/a.c:7:1: warning: unused variable 'y'\nsrc/b.c:2:9: error: expected ';'";
+        let out = compact_by_command("clang -c src/a.c", &raw).unwrap();
+        assert!(out.contains("compile (2 errors, 1 warnings):"), "got: {out}");
+        assert!(out.contains("undeclared identifier"), "got: {out}");
+        assert!(!out.contains("unused variable"), "warning 不入错误列表: {out}");
     }
 }

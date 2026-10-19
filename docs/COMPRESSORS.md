@@ -1,6 +1,6 @@
 # TSK 指令压缩器全量技术文档（deveco 平台实测）
 
-> 来源：`core/src/compact.rs`（Rust 收益引擎）+ `integration/deveco/tsk.plugin.ts`（薄桥）
+> 来源：`core/src/compact/mod.rs`（Rust 收益引擎，含 `log_template.rs`）+ `integration/deveco/tsk.plugin.ts`（薄桥）
 > 实测：`rtk-benefit-test.mjs` 真实命令 AB + onloop 真实 deveco 会话
 > 日期：2026-09-30
 
@@ -256,11 +256,11 @@ Tests 7, suites 0
 
 | 文件 | 位置 | 内容 |
 |---|---|---|
-| `core/src/compact.rs` | 全文 | 13 个指令压缩器 + 单测 |
-| `cli/src/main.rs:129-131` | `Cmd::Compress` | stdin 读 raw → `compact_by_command` |
-| `integration/deveco/tsk.plugin.ts` | `tskCompress()` L120 | `Bun.spawn(["tsk","compress",cmd])` 薄桥 |
+| `core/src/compact/mod.rs` | 全文 | 全部指令压缩器 + 单测 |
+| `cli/src/main.rs:131-135` | `Cmd::Compress` | stdin 读 raw → `compact_by_command` |
+| `integration/deveco/tsk.plugin.ts` | `tskCompress()` L72 | `Bun.spawn(["tsk","compress",cmd])` 薄桥 |
 | `tsk.plugin.ts` | `kbsave/kbsearch/indexSections` | KB 落盘 + 倒排 + B 分节 |
-| `tsk.plugin.ts` | `tool.execute.after` L262 | 大输出 → 压缩改写 output + 落 KB |
+| `tsk.plugin.ts` | `tool.execute.after` L211 | 大输出 → 压缩改写 output + 落 KB |
 
 ## 6. 结论
 
@@ -268,3 +268,34 @@ Tests 7, suites 0
 2. **每成功场净省 0~6,083 tok**（git 考古类最高），研读类零收益但零副作用、零 hook 错误
 3. **净收益 = saved − tsk_search 回读**；实测回读占比 ≤0.7%，可忽略
 4. **免费额度是唯一硬约束**：GLM-5.1 免费 50M tokens/日，够 ~15-20 成功场
+
+## 7. 跨平台：PowerShell（Windows）与 macOS（2026-10-19 扩展）
+
+> 注意：本节的 PowerShell/macOS 支持晚于 §1-6（§1-6 是 2026-09-30 快照，其 `distill`/路径引用已过时——通用兜底 distill 已移除，未命中即放行原文并落 KB）。
+
+### 7.1 PowerShell（Windows）
+
+**识别**：`compact/mod.rs` 的 PS 块——命令名小写化后，首词 ∈ `gci/get-childitem/gps/get-process/sls/select-string/measure-object/measure/dir`，或以 `get-`/`powershell`/`pwsh` 开头。
+
+**子分支**：measure（统计行）、get-process（表）、get-childitem -recurse（路径列表，**已修**：支持任意盘符 `D:\` 与 UNC `\\server\share`）、get-childitem/gci/dir/get-item（ls 语义）、select-string/sls（grep 语义）、**get-winevent/get-eventlog**（事件表，Message 截 160 字）、**`-Name` 变体**（行即文件名）、**通用 PS 表格兜底**。
+
+**通用表格兜底（最高杠杆）**：识别「表头 + 多列破折号分隔线（`^-{2,}(\s+-{2,})+$`）+ 数据行」→ 压成「表头 + 前 20 行」。**一条规则覆盖所有未枚举 cmdlet**（Get-Service/Get-Command/Get-Member/Get-ItemProperty/Get-NetTCPConnection/Get-Volume…）。
+
+**⚠️ 本地化铁律**：中文 Windows（CP936）下 PS 表头/命令标签会本地化（`Get-ChildItem` 表头是 `目录:`）。**标记必须语言无关**：用英文列名（`Status`/`Name`/`Mode`）、分隔线 `----`、行前缀（`Running`/`Stopped`/`d-----`）——绝不用 `Directory of` 这类本地化英文词。
+
+**⚠️ 编码**：`tsk compress` 用 `read_to_string`（UTF-8）；非 UTF-8 stdin 会静默变空 → 放行。真实部署中插件传的是已解码 JS 字符串（UTF-8），不受影响；仅在直接管道 GBK 字节时需先 `iconv`。
+
+### 7.2 macOS
+
+**命令**（mac 无本机环境，全部构造样例单测）：
+
+| 命令 | 检测 | 规则 |
+|---|---|---|
+| `xcodebuild` | 内容：`BUILD SUCCEEDED`（**注意 Xcode 拼 `SUCCEEDED`，非 `SUCCESSFUL`**）/`BUILD FAILED`/`CompileSwift`/`CompileC`/`** BUILD` | 镜像 hvigor：保留结论行 + `error:`/`warning:`/`fatal` 行 |
+| `log show` | `first==log` 且含 `show` | 统一日志（巨大）→ 只留 ` Error `/` Fault ` 行 + 计数 |
+| `brew list/outdated/info` | `first==brew` | 包列表 / `Name Installed Current` 表 → head |
+| `system_profiler` | `first==system_profiler` | 巨型 kv → 保留段头 + 前 20 行 |
+
+### 7.3 共享：编译器错误
+
+内容判定（最后兜底）：`path:line:col: error:`（clang/gcc/swift）或 `error[EXXXX]:`（rustc）→ 保留错误行 + 计数。两平台共用。

@@ -1,5 +1,10 @@
 # PowerShell 命令输出压缩调研
 
+> **状态（2026-10-19）：已实现并扩展。** 本文档的「现状」描述已过时——PowerShell 压缩已落地于
+> `core/src/compact/mod.rs`（PS 块），覆盖 measure/get-process/get-childitem(-recurse)/get-item/
+> select-string **+ 通用表格兜底 + Get-WinEvent/Get-EventLog + `-Name` 变体**。
+> 完整现状见 `docs/COMPRESSORS.md` §7.1；本文保留为设计留档。
+
 目标：评估 TSK 对 **PowerShell 命令**（Windows 环境下 deveco/开发常用）的输出压缩。
 现状：当前 `compact_by_command` 只识别 bash 系命令（ls/git/grep/find/wc/du/df/ps/curl/devecocli docs/测试），
 PowerShell 命令（`Get-ChildItem`/`gci`/`Get-Process`/`Select-String`/`Measure-Object`…）**全部不识别 → 放行**。
