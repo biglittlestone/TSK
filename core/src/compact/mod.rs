@@ -334,7 +334,32 @@ pub fn compact_by_command(cmd: &str, raw: &str) -> Option<String> {
                     return Some(format!("grep ({} matches):\n{h}{more}", rows.len()));
                 }
             }
-            // 6) Get-WinEvent / Get-EventLog：事件日志表（保留事件头 + 数据行，Message 截断）
+            // 6) JSON 输出（ConvertTo-Json / Invoke-RestMethod / Invoke-WebRequest）：提取键
+            if l.contains("convertto-json") || l.contains("convertfrom-json")
+                || l.contains("invoke-restmethod") || l.contains("invoke-webrequest")
+            {
+                let t0 = raw.trim_start();
+                if t0.starts_with('{') || t0.starts_with('[') {
+                    let h = raw.chars().take(400).collect::<String>();
+                    let t = raw.chars().rev().take(400).collect::<String>().chars().rev().collect::<String>();
+                    let mut keys: Vec<String> = Regex::new(r#""([A-Za-z0-9_]+)"\s*:"#).unwrap()
+                        .captures_iter(raw).filter_map(|c| c.get(1).map(|m| m.as_str().to_string())).collect();
+                    keys.sort(); keys.dedup();
+                    let keyline = if keys.is_empty() { String::new() } else { format!("\nJSON 键 ({}): {}", keys.len().min(40), keys.iter().take(40).cloned().collect::<Vec<_>>().join(" ")) };
+                    return Some(format!("json ({} B)：\n头部:\n{h}\n…\n尾部:\n{t}{keyline}", raw.len()));
+                }
+            }
+            // 7) Format-List / kv 块兜底：连续「Key    : value」形态（冒号前有空格 = PS Format-List 特征，
+            //    区别于普通散文的 `Note:`）→ 覆盖 Get-CimInstance / Get-Item | Format-List / Get-Acl 等非表格输出
+            {
+                let re_kv = Regex::new(r"^\s*[^:\s][^:]*\s+:\s+\S").unwrap();
+                let kv: Vec<String> = lines.iter().filter(|x| re_kv.is_match(x)).map(|x| x.trim().to_string()).collect();
+                if kv.len() >= 4 && kv.len() * 2 >= lines.len() {
+                    let more = if kv.len() > CAP_LIST { format!("\n… +{} more", kv.len() - CAP_LIST) } else { String::new() };
+                    return Some(format!("kv ({} 项):\n{}{}", kv.len(), head(&kv, CAP_LIST), more));
+                }
+            }
+            // 8) Get-WinEvent / Get-EventLog：事件日志表（保留事件头 + 数据行，Message 截断）
             if l.contains("get-winevent") || l.contains("get-eventlog") {
                 let hdr: Vec<String> = lines.iter()
                     .filter(|x| {
@@ -360,7 +385,7 @@ pub fn compact_by_command(cmd: &str, raw: &str) -> Option<String> {
                     return Some(format!("events ({} 条):\n{h}\n{}{}", rows.len(), head(&rows, CAP_ERR), more));
                 }
             }
-            // 7) 通用 PS 表格兜底：表头 + 多列破折号分隔线 + 数据行 → 表头 + 前 CAP_LIST 行。
+            // 9) 通用 PS 表格兜底：表头 + 多列破折号分隔线 + 数据行 → 表头 + 前 CAP_LIST 行。
             //    一条规则覆盖所有未枚举 cmdlet（Get-Service/Get-Command/Get-Member/Get-ItemProperty/
             //    Get-NetTCPConnection/Get-Volume…）。必须有「≥2 段破折号的分隔线」才触发，避免误伤普通文本；
             //    Get-Content 走下方 cat 分支，不在此列。
@@ -729,5 +754,20 @@ mod t {
         assert!(out.contains("compile (2 errors, 1 warnings):"), "got: {out}");
         assert!(out.contains("undeclared identifier"), "got: {out}");
         assert!(!out.contains("unused variable"), "warning 不入错误列表: {out}");
+    }
+    #[test]
+    fn ps_json_output_extracts_keys() {
+        let raw = r#"{"name":"pkg","version":"1.0.0","scripts":{"build":"tsc"},"dependencies":{"x":"^1"}}"#;
+        let out = compact_by_command("Get-Content package.json | ConvertFrom-Json", &raw).unwrap();
+        assert!(out.contains("json ("), "got: {out}");
+        assert!(out.contains("JSON 键"), "got: {out}");
+        assert!(out.contains("dependencies") && out.contains("version"), "键保留: {out}");
+    }
+    #[test]
+    fn ps_format_list_kv_capped() {
+        let raw = "Name        : Foo\nLength      : 12345\nMode        : -a---\nLastWrite   : 2026/01/01\nFullName    : C:\\x\\Foo.txt";
+        let out = compact_by_command("Get-Item C:\\x\\Foo.txt | Format-List", &raw).unwrap();
+        assert!(out.contains("kv (5 项):"), "got: {out}");
+        assert!(out.contains("Name") && out.contains("FullName"), "got: {out}");
     }
 }

@@ -277,7 +277,7 @@ Tests 7, suites 0
 
 **识别**：`compact/mod.rs` 的 PS 块——命令名小写化后，首词 ∈ `gci/get-childitem/gps/get-process/sls/select-string/measure-object/measure/dir`，或以 `get-`/`powershell`/`pwsh` 开头。
 
-**子分支**：measure（统计行）、get-process（表）、get-childitem -recurse（路径列表，**已修**：支持任意盘符 `D:\` 与 UNC `\\server\share`）、get-childitem/gci/dir/get-item（ls 语义）、select-string/sls（grep 语义）、**get-winevent/get-eventlog**（事件表，Message 截 160 字）、**`-Name` 变体**（行即文件名）、**通用 PS 表格兜底**。
+**子分支**：measure（统计行）、get-process（表）、get-childitem -recurse（路径列表，**已修**：支持任意盘符 `D:\` 与 UNC `\\server\share`）、get-childitem/gci/dir/get-item（ls 语义）、select-string/sls（grep 语义）、**JSON 输出**（ConvertTo-Json/ConvertFrom-Json/Invoke-RestMethod → 提取键）、**Format-List/kv 兜底**（连续 `Key    : value` 形态，覆盖 `| fl`/Get-Acl 等非表格输出）、**get-winevent/get-eventlog**（事件表，Message 截 160 字）、**`-Name` 变体**（行即文件名）、**通用 PS 表格兜底**。
 
 **通用表格兜底（最高杠杆）**：识别「表头 + 多列破折号分隔线（`^-{2,}(\s+-{2,})+$`）+ 数据行」→ 压成「表头 + 前 20 行」。**一条规则覆盖所有未枚举 cmdlet**（Get-Service/Get-Command/Get-Member/Get-ItemProperty/Get-NetTCPConnection/Get-Volume…）。
 
