@@ -9,7 +9,7 @@
 - **只构建，不运行**：前端是 HarmonyOS 应用，模拟器/设备/真机**永久禁用**。前端只做 `hvigorw assembleHap` 构建验证（产 hap）。
 - **GLM-5.1 免费额度 50M tok/日** 是硬约束。
 
-## 场景覆盖（backlog 31 轮）
+## 场景覆盖（backlog 55 轮）
 
 前 8 轮是"开发新功能"，但真实 agent 工作远不止于此。按业界 agentic benchmark 的分类补全：
 
@@ -26,6 +26,8 @@
 | **测试** | 28 | 端到端集成测试套件（借→归还→并发→删书全链） | SWE-bench test 完备性 |
 | **安全** | 29 | **grep 全库输入路径与危险模式**（拼 SQL/未校验落库/静默吞错）并修 | CWE-bench/RepoAudit 扫描模式 |
 | **理解** | 30–31 | 全模块架构文档（ER+状态机+前端数据流）· **git 全史考古**（27+ 提交追踪借阅逻辑演变） | onboarding；代码考古 |
+| **高收益轮（配方 A）** | 32–47 | **强制工具整读** books.json 各角度（审计/统计/迁移/画像/时间/字典）· git 考古（前端/测试/schema/API/issue/构建） | 段内 e2e 3.66% |
+| **新数据源** | 48–55 | 引入 1.4MB `loans_history.json`（9000 条借阅历史），整读审计/时间/读者/借期/对照/联合/热门/字典 | 段内 e2e 18.5% |
 
 > `ISSUES.md` 是 issue 素材（8 条报上来的问题，**是报告不是规格**——需自行复现定位）。轮 11 的回归排查依赖前 10 轮积累的 git 历史；轮 31 的全史考古依赖**全部** 31 轮前的历史，因此放在最后。
 
@@ -44,6 +46,14 @@ TSK 的 saved 只来自**被压缩的大工具输出**（输出 >1600 字符 + �
 
 排序上 git 历史只增不减，diff/考古轮越靠后 diff 越大 → 考古类（31）压轴。
 
+### 32–55 轮：配方 A 与新数据源（把 e2e 从 1.6% 推到 3.9%）
+
+**配方 A（最强杠杆）**：让模型**用 cat/read 工具整读全量文件**，而非写脚本 `readFileSync` 只打印统计。轮 27（写脚本）saved 仅 10,418，轮 32（加一句「禁止脚本、必须用工具逐段读完」）saved 104,156——**唯一差别就是那句 prompt**。原理：工具输出被压成摘要，而读大文件的 input 成本≈0（只进 ~200 token），saved 是纯赚，故单轮 e2e 可达 20–49%。
+
+**新数据源**：`reference/loans_history.json`（`tools/gen-loans-history.mjs` 确定性生成，9000 条、1.4MB，埋 5 类数据问题供审计轮挖）。收益与"被读文件字节数"近似线性：books.json 294KB → 单轮 73–120k；1.4MB → 单轮 160–563k。
+
+> **边界**：1.4MB 已是真实借阅历史的合理规模，继续冲高只剩"堆更大数据"、会偏离真实案例。55 轮 / 3.92% 是"保持数据真实"前提下的自然上限。
+
 > `ISSUES.md` 是 issue 素材（8 条报上来的问题，**是报告不是规格**——需自行复现定位）。
 > 轮 11 的回归排查依赖前 10 轮积累的 git 历史。
 
@@ -52,7 +62,8 @@ TSK 的 saved 只来自**被压缩的大工具输出**（输出 >1600 字符 + �
 ```
 gen-seed.sh        生成空白工作区 .work/seed（SPEC.md + ISSUES.md + reference/books.json + 空 git 仓库）
 template/          起点模板
-backlog.json       任务清单（31 轮：开发/缺陷/质量/工程/理解 + 23-31 高收益轮）
+backlog.json       任务清单（55 轮：开发/缺陷/质量/工程/理解 + 23-31 高收益轮 + 32-47 配方A + 48-55 新数据源）
+tools/             gen-loans-history.mjs（生成 reference/loans_history.json）
 run-persistent.sh  常驻循环驱动（每轮独立 deveco 会话 → 验收 → git 提交 → 归因）
 ab-read-ccr.sh     read-CCR 完成度影响性 A/B
 acceptance/run.mjs 独立验收套件（agent 无关，按 SPEC 契约打 HTTP）

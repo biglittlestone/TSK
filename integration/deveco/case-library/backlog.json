@@ -153,5 +153,125 @@
     "id": 31,
     "title": "[git 全史考古] 借阅逻辑的完整演变史",
     "prompt": "仓库根目录是一个图书管理系统（见 SPEC.md 与 ISSUES.md）。server/ 是 Bun+SQLite REST API，app/ 是 HarmonyOS ArkUI 前端，reference/books.json 是书目数据。这个仓库已累积 27 个以上提交（从 opt-1 到当前），完整记录了系统从 0 到现在的每一步。请做一次 git 全史考古：先用 git log --stat 看整体提交脉络，再用 git show 与 git log -p 逐个读提交，重点追踪借阅相关逻辑（借出、归还、逾期判定、状态守卫、事务）在哪些提交里被引入、被改坏、又被修好，画出这条逻辑的完整演变史，形式为「提交号 → 当时改了什么 → 为什么改」。产出一份《借阅逻辑演变史》文档，每个结论都要能指到具体提交，不要臆测。这是一次理解类任务，不需要改代码。"
+  },
+  {
+    "id": 32,
+    "title": "[整读审计] 逐条核对 1100 条书目数据质量",
+    "prompt": "仓库根目录是一个图书管理系统（见 SPEC.md 与 ISSUES.md）。server/ 是 Bun+SQLite REST API，app/ 是 HarmonyOS ArkUI 前端，reference/books.json 是书目数据。请对 reference/books.json（约 294KB、1100 条）做一次逐条数据质量审计。关键要求：**必须用 cat 或 read 工具把整个文件完整读出来**，不要写 node/python 脚本解析，也不要只 grep 片段——我需要基于完整原文逐条核对。核对项：(a) 每条是否都有 id/title/author/isbn/category/status 五个字段；(b) status 为 borrowed 的条是否都有 dueDate、且 dueDate 格式合法（YYYY-MM-DD、年份必须是 4 位，例如 202-01-01 这种三位年是违规）；(c) ISBN 是否格式统一（是否有的带连字符有的不带）；(d) publishedYear 是否在合理范围。把**全部**不合规条目的 id 与具体字段值逐条列出，最后给出不合规率统计。产出 DATA-AUDIT.md 放到仓库根目录。这是一次审计类任务，不需要改代码。"
+  },
+  {
+    "id": 33,
+    "title": "[整读统计] 全量字段分布与异常画像",
+    "prompt": "仓库根目录是一个图书管理系统（见 SPEC.md 与 ISSUES.md）。server/ 是 Bun+SQLite REST API，app/ 是 HarmonyOS ArkUI 前端，reference/books.json 是书目数据。请对 reference/books.json（294KB、1100 条）做一次完整的数据画像。关键要求：**必须用 cat 或 read 工具把整个文件完整读出来**，不要写脚本解析。需要产出：category 的完整分布（每个类别多少条、代表书目名）；status 的分布（in 与 borrowed 各多少）；publishedYear 的年代分布（按十年分组）；dueDate 年份不足 4 位的全部条目；ISBN 是否重复、是否带连字符的统计。每个分布都要给出具体数字与代表样本，不遗漏任何一类。产出 DATA-PROFILE.md 放到仓库根目录。这是一次理解类任务，不需要改代码。"
+  },
+  {
+    "id": 34,
+    "title": "[整读迁移] 全量书目迁移到新 schema",
+    "prompt": "仓库根目录是一个图书管理系统（见 SPEC.md 与 ISSUES.md）。server/ 是 Bun+SQLite REST API，app/ 是 HarmonyOS ArkUI 前端，reference/books.json 是书目数据。请把全部 1100 条书目从现有 schema 迁移到新 schema：每条新增 normalizedIsbn 字段（去掉连字符、转为统一格式），并修正 dueDate 中畸形年份（如 202-01-01 这类三位年视为非法，标为 null 并记录）。**必须用 cat 或 read 工具完整读取源文件，逐条处理，不能只处理一部分或跳过**。产出迁移后的完整数据文件 books-v2.json（包含全部 1100 条）与迁移清单 MIGRATION.md（逐条列出 id、原值、新值、变更原因）。不要改动 reference/books.json 原文。"
+  },
+  {
+    "id": 35,
+    "title": "[git 考古] 前端组件化与主题系统的演变史",
+    "prompt": "仓库根目录是一个图书管理系统（见 SPEC.md 与 ISSUES.md）。server/ 是 Bun+SQLite REST API，app/ 是 HarmonyOS ArkUI 前端，reference/books.json 是书目数据。这个仓库已有 30+ 提交。请做一次 git 考古，专注前端 app/ 的组件化与主题系统演变：从 opt-1 的初始实现，到 opt-6/7/8 的分页与主题统一，再到 opt-15 新增页面、opt-25 抽取公共组件。用 git log --stat 与 git log -p 追 app/ 目录每个提交的改动，说明每个阶段的页面结构、公共模块（HttpClient/Theme/Models/Constants）是如何一步步形成的，组件抽取是在哪个提交、以什么方式完成的。产出 FRONTEND-EVOLUTION.md，每个结论指到具体提交，不要臆测。这是一次理解类任务，不需要改代码。"
+  },
+  {
+    "id": 36,
+    "title": "[git 考古] 测试代码的演变史",
+    "prompt": "仓库根目录是一个图书管理系统（见 SPEC.md 与 ISSUES.md）。server/ 是 Bun+SQLite REST API，app/ 是 HarmonyOS ArkUI 前端，reference/books.json 是书目数据。这个仓库已有 30+ 提交。请做一次 git 考古，专注测试代码的演变：server/test/ 下的 server.test.js 与 repository.test.js 是如何从无到有、从少到多长出来的？用 git log --stat 与 git log -p 追这两个文件在每个提交的改动，说明：测试是从哪个提交开始出现的；哪些功能修复（opt-9/10/12/13 的 issue 修复、opt-14 性能、opt-17 单测补充）各自加了什么测试；覆盖范围是如何扩大的。产出 TEST-EVOLUTION.md，每个结论指到具体提交，不要臆测。这是一次理解类任务，不需要改代码。"
+  },
+  {
+    "id": 37,
+    "title": "[git 考古] 数据模型与 schema 的演变史",
+    "prompt": "仓库根目录是一个图书管理系统（见 SPEC.md 与 ISSUES.md）。server/ 是 Bun+SQLite REST API，app/ 是 HarmonyOS ArkUI 前端，reference/books.json 是书目数据。这个仓库已有 30+ 提交。请做一次 git 考古，专注数据模型与 schema 的演变：books/loans 表结构、索引、字段（status/due_date/borrower）是怎么一步步设计成现在的样子的？用 git log --stat 与 git log -p 追 server/db.js 与 server/repository.js 在每个提交的改动，说明：初始 schema 长什么样；opt-2 的索引、opt-3 的状态守卫与事务、opt-4 的借期字段、opt-10 的删除级联、opt-24 的拆模块各自如何改动了数据层。产出 SCHEMA-EVOLUTION.md，每个结论指到具体提交，不要臆测。这是一次理解类任务，不需要改代码。"
+  },
+  {
+    "id": 38,
+    "title": "[整读+库对比] 数据文件与数据库一致性核对",
+    "prompt": "仓库根目录是一个图书管理系统（见 SPEC.md 与 ISSUES.md）。server/ 是 Bun+SQLite REST API，app/ 是 HarmonyOS ArkUI 前端，reference/books.json 是书目数据。请做一次数据一致性核对，两边都要查：一边用 sqlite3 或 node 直接查询 server/library.db 中 books 表的全部行（条数、字段、抽样），另一边**用 cat 或 read 工具完整读取 reference/books.json**（不要写脚本解析）。核对两者在条目数、每本书的 id/title/isbn/status 上是否一致；列出所有在数据库里存在但 JSON 里没有（或反之）的条目；列出 status 不一致的条目。产出 DATA-CONSISTENCY.md 放到仓库根目录，每个结论都要能给出来源（库行 id 或 JSON 条目 id）。不要改代码、不要改动数据库与 JSON。"
+  },
+  {
+    "id": 39,
+    "title": "[整读画像] 读者与借阅行为的数据画像",
+    "prompt": "仓库根目录是一个图书管理系统（见 SPEC.md 与 ISSUES.md）。server/ 是 Bun+SQLite REST API，app/ 是 HarmonyOS ArkUI 前端，reference/books.json 是书目数据。请做一份借阅行为的完整数据画像。关键要求：**必须用 cat 或 read 工具完整读取 reference/books.json**（不要写脚本解析），并可用 sqlite3 或 node 查询 server/library.db 的 loans 表补充信息。产出：哪些书被借出（borrowed）完整清单；所有借阅者的分布（每人借了几本、借了哪些书）；逾期记录（dueDate 已过且 status 为 borrowed）完整清单；借阅最频繁的前 10 本书；被借出时间最长（dueDate 最久远）的前 10 本。每个结论都要列出具体 id 与书名，不遗漏。产出 LOANS-PROFILE.md 放到仓库根目录。不要改代码、不要改动数据。"
+  },
+  {
+    "id": 40,
+    "title": "[整读分析] 出版年代与上架时间的关联画像",
+    "prompt": "仓库根目录是一个图书管理系统（见 SPEC.md 与 ISSUES.md）。server/ 是 Bun+SQLite REST API，app/ 是 HarmonyOS ArkUI 前端，reference/books.json 是书目数据。请做一份时间维度的数据画像。关键要求：**必须用 cat 或 read 工具完整读取 reference/books.json**（不要写脚本解析）。分析 publishedYear 与 addedAt 的分布与关联：按出版年代（每 10 年一组）列出书目数与代表书名；按上架年份列出书目数；列出出版年份早于 1900 或晚于当前年度的异常条目；分析出版年代与借出状态（borrowed/in）是否有关系（哪个年代的借出率高）。每个结论都要给出具体数字与代表样本。产出 TIME-PROFILE.md 放到仓库根目录。这是一次理解类任务，不需要改代码。"
+  },
+  {
+    "id": 41,
+    "title": "[整读字典] 逐字段的全量取值枚举",
+    "prompt": "仓库根目录是一个图书管理系统（见 SPEC.md 与 ISSUES.md）。server/ 是 Bun+SQLite REST API，app/ 是 HarmonyOS ArkUI 前端，reference/books.json 是书目数据。请产出一份数据字典。关键要求：**必须用 cat 或 read 工具完整读取 reference/books.json**（不要写脚本解析），然后对每个字段逐一枚举它在该文件里的全部不同取值：id（范围与是否有空/重复）、title（是否有空或重复）、author（完整作者列表、每位作者的书目数）、isbn（全部不同格式样本）、category（完整分类列表与计数）、publishedYear（全部不同值）、status（全部取值与计数）、borrower（全部借阅者与各自计数）、dueDate（全部取值，含畸形样本）、addedAt（年份分布）。每个字段都要列全，不遗漏任何取值。产出 DATA-DICTIONARY.md 放到仓库根目录。这是一次理解类任务，不需要改代码。"
+  },
+  {
+    "id": 42,
+    "title": "[git 考古] API 端点契约的演变史",
+    "prompt": "仓库根目录是一个图书管理系统（见 SPEC.md 与 ISSUES.md）。server/ 是 Bun+SQLite REST API，app/ 是 HarmonyOS ArkUI 前端，reference/books.json 是书目数据。这个仓库已有 30+ 提交。请做一次 git 考古，专注 server/ 的 REST API 端点契约演变：GET/POST /books、GET/POST /loans、POST /loans/:id/return 这些端点在哪些提交里被创建、参数与错误码如何演变。用 git log --stat 与 git log -p 追 server/routes.js 与 server/server.js 的每个改动，说明：初始定义了哪些端点；opt-9/10 的 issue 修复、opt-3 的状态守卫（409）、opt-16 的校验中间件、opt-24 的拆模块各自如何改变了端点契约；最终每个端点的完整契约（方法/路径/参数/响应/错误码）是什么。产出 API-EVOLUTION.md，每个结论指到具体提交，不要臆测。这是一次理解类任务，不需要改代码。"
+  },
+  {
+    "id": 43,
+    "title": "[git 考古] 八个 issue 从报告到修复的闭环",
+    "prompt": "仓库根目录是一个图书管理系统（见 SPEC.md 与 ISSUES.md）。server/ 是 Bun+SQLite REST API，app/ 是 HarmonyOS ArkUI 前端，reference/books.json 是书目数据。ISSUES.md 记录了 8 个用户报上来的问题。请做一次 git 考古，追踪这 8 个 issue 各自的完整闭环：先读 ISSUES.md 全文，然后用 git log 与 git show 逐个确认每个 issue 是在哪个提交被修复的、修复改了什么文件、加了什么测试。注意有些 issue 是在轮 9-13 显式修复的（如 #4 并发、#6 删除悬空、#3 逾期边界、#7 转义、#8 列表刷新），有些可能是早期轮次顺带修好的（如 #1 空态、#2 ISBN）。对每个 issue 输出：报告内容 → 复现提交 → 修复提交 → 改动的文件与关键行 → 是否补了测试。产出 ISSUES-CLOSED-LOOP.md，每个结论指到具体提交，不要臆测。这是一次理解类任务，不需要改代码。"
+  },
+  {
+    "id": 44,
+    "title": "[git 考古] 依赖与构建配置的演变史",
+    "prompt": "仓库根目录是一个图书管理系统（见 SPEC.md 与 ISSUES.md）。server/ 是 Bun+SQLite REST API，app/ 是 HarmonyOS ArkUI 前端，reference/books.json 是书目数据。这个仓库已有 30+ 提交。请做一次 git 考古，专注依赖与构建配置的演变：server/package.json（依赖、scripts）、app 的 hvigor 配置（hvigorfile.ts、oh-package.json5、module.json5）、根目录配置（若有）。用 git log --stat 与 git log -p 追踪这些配置文件在哪些提交里被改过，说明：初始依赖集是什么；opt-20 的依赖升级改了什么、为何有破坏性变更；hvigor/ohpm 相关配置何时出现与变化；最终版本的依赖清单与构建配置是什么。产出 BUILD-CONFIG-EVOLUTION.md，每个结论指到具体提交，不要臆测。这是一次理解类任务，不需要改代码。"
+  },
+  {
+    "id": 45,
+    "title": "[整读分析] 借阅时长的深度分布",
+    "prompt": "仓库根目录是一个图书管理系统（见 SPEC.md 与 ISSUES.md）。server/ 是 Bun+SQLite REST API，app/ 是 HarmonyOS ArkUI 前端，reference/books.json 是书目数据。请做借阅时长的深度分析。关键要求：**必须用 cat 或 read 工具完整读取 reference/books.json**（不要写脚本解析），可用 sqlite3 或 node 查 server/library.db 补充。以今天 2026-10-16 为基准：对每本 borrowed 状态的书，计算其借出时长（从 addedAt 或 dueDate 推断的实际占用天数，说明你的口径）；列出借出时间最长的前 20 本（含 id/书名/dueDate/时长）；逾期天数（dueDate 早于今天）分布——0-7 天/8-30 天/31-90 天/90 天以上各多少本；全部逾期书按逾期天数排序的完整清单。每个结论给具体 id 与书名。产出 LOAN-DURATION.md 放到仓库根目录。不要改代码、不要改动数据。"
+  },
+  {
+    "id": 46,
+    "title": "[整读+库] 三条数据链路全对照",
+    "prompt": "仓库根目录是一个图书管理系统（见 SPEC.md 与 ISSUES.md）。server/ 是 Bun+SQLite REST API，app/ 是 HarmonyOS ArkUI 前端，reference/books.json 是书目数据。请做一次全链路数据对照。关键要求：**必须用 cat 或 read 工具完整读取 reference/books.json**（不要写脚本解析），并用 sqlite3 或 node 完整导出 server/library.db 的 books、loans、members（或等价）三张表的全部行。核对三层数据是否一致：JSON 数据权威 vs 数据库种子 vs 通过 API 实际返回（可临时起服务或直接查库）。对每层输出：表/集合的条数、字段集合、与上一层逐条对照（哪些条目一致、哪些不一致——多出来的、少了的、字段值不同的）。产出 DATA-CROSS-CHECK.md 放到仓库根目录，每个差异都要给出具体 id。不要改代码、不要改动数据库与 JSON。"
+  },
+  {
+    "id": 47,
+    "title": "[整读统计] ISBN 全量深度画像",
+    "prompt": "仓库根目录是一个图书管理系统（见 SPEC.md 与 ISSUES.md）。server/ 是 Bun+SQLite REST API，app/ 是 HarmonyOS ArkUI 前端，reference/books.json 是书目数据。请做 ISBN 的深度画像。关键要求：**必须用 cat 或 read 工具完整读取 reference/books.json**（不要写脚本解析）。分析全部 1100 条的 ISBN：连字符模式（哪几位分组，如 978-x-xxx-xxxx-x，列出所有不同的连字符位置组合与各自条数）；长度分布（去连字符后是 10 位还是 13 位，各多少）；前缀分布（978/979 各多少）；是否满足 ISBN-13 校验规则（把每条的校验位算出来与尾位比对，列出不满足校验的完整清单）；完全重复的 ISBN 清单。每个结论给具体样本与数字。产出 ISBN-PROFILE.md 放到仓库根目录。这是一次理解类任务，不需要改代码。"
+  },
+  {
+    "id": 48,
+    "title": "[整读审计] 借阅历史数据质量逐条审计",
+    "prompt": "仓库根目录是一个图书管理系统（见 SPEC.md 与 ISSUES.md）。server/ 是 Bun+SQLite REST API，app/ 是 HarmonyOS ArkUI 前端，reference/books.json 是书目数据。请对 reference/loans_history.json（约 1.4MB、9000 条借阅记录）做一次逐条数据质量审计。关键要求：**必须用 cat 或 read 工具把整个文件完整读出来，逐段读完**，不要写 node/python 脚本解析。核对项：(a) dueDate 是否都是合法日期（年份必须 4 位，三位年如 202-01-01 是违规）；(b) bookId 是否都在 1-1100 范围内（0 或 9999 之类越界是违规）；(c) borrower 是否非空；(d) returnedAt 是否晚于 borrowedAt（时间倒置违规）；(e) borrowedAt 是否早于今天（未来借出违规）。把**全部**不合规条目的 id、bookId、borrower、日期与违规类型逐条列出（若太多则按违规类型分组，每组列出全部条数与 id 范围及前 50 条样本），最后给出各类违规率统计。产出 LOANS-AUDIT.md 放到仓库根目录。这是一次审计类任务，不需要改代码。"
+  },
+  {
+    "id": 49,
+    "title": "[整读统计] 借阅历史的时间分布画像",
+    "prompt": "仓库根目录是一个图书管理系统（见 SPEC.md 与 ISSUES.md）。server/ 是 Bun+SQLite REST API，app/ 是 HarmonyOS ArkUI 前端，reference/books.json 是书目数据。请对 reference/loans_history.json（约 1.4MB、9000 条）做时间维度的完整画像。关键要求：**必须用 cat 或 read 工具完整读取整个文件，逐段读完**，不要写脚本解析。产出：按年（2023/2024/2025/2026）的借出条数；按月（1-12 月）的借出条数分布；全年借出高峰月与低谷月；按星期几（周一到周日）的借出分布；borrowedAt 在 2026 年的条数占比。每个分布都要给具体数字与百分比，并列出各月/各年的代表样本（几条第几条）。产出 LOANS-TIME.md 放到仓库根目录。这是一次理解类任务，不需要改代码。"
+  },
+  {
+    "id": 50,
+    "title": "[整读画像] 借阅者行为的完整画像",
+    "prompt": "仓库根目录是一个图书管理系统（见 SPEC.md 与 ISSUES.md）。server/ 是 Bun+SQLite REST API，app/ 是 HarmonyOS ArkUI 前端，reference/books.json 是书目数据。请对 reference/loans_history.json（约 1.4MB、9000 条）做借阅者行为画像。关键要求：**必须用 cat 或 read 工具完整读取整个文件，逐段读完**，不要写脚本解析。产出：全部借阅者（borrower）清单与各自借阅次数，按次数降序；借阅次数最多的前 10 位读者及其借阅明细（每本 id、书名可对照 books.json）；每位读者借了哪些书、平均借期（borrowedAt 到 returnedAt 或至今）；还书率（returned / 总借阅）最高的前 5 位与最低的前 5 位。每个结论给具体读者名与数字。产出 BORROWER-PROFILE.md 放到仓库根目录。这是一次理解类任务，不需要改代码。"
+  },
+  {
+    "id": 51,
+    "title": "[整读分析] 借期与逾期的深度分布",
+    "prompt": "仓库根目录是一个图书管理系统（见 SPEC.md 与 ISSUES.md）。server/ 是 Bun+SQLite REST API，app/ 是 HarmonyOS ArkUI 前端，reference/books.json 是书目数据。请对 reference/loans_history.json（约 1.4MB、9000 条）做借期与逾期分析。关键要求：**必须用 cat 或 read 工具完整读取整个文件，逐段读完**，不要写脚本解析。以今天 2026-10-16 为基准：实际借期分布（borrowedAt 到 returnedAt，对未归还算到今天）——平均借期、中位数、按 1-7 天/8-14 天/15-30 天/30 天以上分组计数；逾期条数（dueDate 早于今天且未归还）；逾期天数分布（0-7/8-30/31-90/90 以上）；逾期最严重的前 20 条（id、bookId、dueDate、逾期天数）。每个结论给具体数字与样本。产出 LOAN-DURATION2.md 放到仓库根目录。不要改代码。"
+  },
+  {
+    "id": 52,
+    "title": "[整读+库对照] 借阅历史与数据库 loans 表一致性核对",
+    "prompt": "仓库根目录是一个图书管理系统（见 SPEC.md 与 ISSUES.md）。server/ 是 Bun+SQLite REST API，app/ 是 HarmonyOS ArkUI 前端，reference/books.json 是书目数据。请做借阅历史的一致性核对，两边都要查：一边**用 cat 或 read 工具完整读取 reference/loans_history.json**（不要写脚本解析）；另一边用 sqlite3 或 node 完整导出 server/library.db 中 loans（或等价）表的全部行。核对两者在条数、每条的 bookId/borrower/borrowedAt/dueDate/status 上是否一致；列出在历史文件里存在但库中没有（或反之）的条目；列出字段值不一致的条目。产出 LOANS-CONSISTENCY.md 放到仓库根目录，每个结论给出具体来源（JSON 条 id 或库行）。不要改代码、不要改动数据库与 JSON。"
+  },
+  {
+    "id": 53,
+    "title": "[整读关联] 书目与借阅历史的联合画像",
+    "prompt": "仓库根目录是一个图书管理系统（见 SPEC.md 与 ISSUES.md）。server/ 是 Bun+SQLite REST API，app/ 是 HarmonyOS ArkUI 前端，reference/books.json 是书目数据。请做一份书目与借阅历史的联合画像。关键要求：**必须用 cat 或 read 工具完整读取 reference/loans_history.json（约 1.4MB、9000 条），也完整读取 reference/books.json（294KB、1100 条），两个都要逐段读完**，不要写脚本解析。产出：被借阅次数最多的前 20 本书（用 bookId 关联 books.json 得书名）；从未被借阅过的书清单及数量；哪些 category 的书借阅最多（按分类聚合借阅次数）；借出次数与书目 status（books.json 里的 borrowed/in）是否吻合——列出书目状态与借阅历史明显冲突的条目（如 status=in 但历史显示被借出未还）。每个结论给具体 id/书名/数字。产出 JOINT-PROFILE.md 放到仓库根目录。这是一次理解类任务，不需要改代码。"
+  },
+  {
+    "id": 54,
+    "title": "[整读分析] 热门书目与借阅偏好分析",
+    "prompt": "仓库根目录是一个图书管理系统（见 SPEC.md 与 ISSUES.md）。server/ 是 Bun+SQLite REST API，app/ 是 HarmonyOS ArkUI 前端，reference/books.json 是书目数据。请做热门书目与借阅偏好分析。关键要求：**必须用 cat 或 read 工具完整读取 reference/loans_history.json（约 1.4MB、9000 条），并完整读取 reference/books.json**，两个都逐段读完，不要写脚本解析。产出：借阅次数 TOP 20 书目（id、书名、作者、category、借阅次数）；每位读者（借阅 ≥5 次者）的借阅偏好（最常借的 category 与作者）；热门作者 TOP 10（按借阅次数）；借阅冷门书目（仅被借 1 次的）清单。每个结论给具体数据与样本。产出 HOTBOOKS.md 放到仓库根目录。这是一次理解类任务，不需要改代码。"
+  },
+  {
+    "id": 55,
+    "title": "[整读统计] 借阅历史字段级画像",
+    "prompt": "仓库根目录是一个图书管理系统（见 SPEC.md 与 ISSUES.md）。server/ 是 Bun+SQLite REST API，app/ 是 HarmonyOS ArkUI 前端，reference/books.json 是书目数据。请对 reference/loans_history.json（约 1.4MB、9000 条）做字段级数据字典。关键要求：**必须用 cat 或 read 工具完整读取整个文件，逐段读完**，不要写脚本解析。对每个字段逐一枚举全部不同取值：id（是否连续、有无重复）；bookId（分布范围、出现次数最多与最少的 bookId）；borrower（全部不同读者及各自条数）；borrowedAt（年份/月份分布）；dueDate（全部不同取值，含畸形样本清单）；returnedAt（有无为空、年份分布）；status（全部取值及计数）。每个字段列全，不遗漏。产出 LOANS-DICTIONARY.md 放到仓库根目录。这是一次理解类任务，不需要改代码。"
   }
 ]
