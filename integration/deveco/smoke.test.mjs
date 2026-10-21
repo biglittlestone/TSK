@@ -3,6 +3,10 @@
 // （rtk 式逐命令语义压缩 + 无损落盘 KB + 取回指针；通用蒸馏已移除，未识别命令放行）。
 // 这正是 Claude Code 原生做不到的那条路。并覆盖：read 无损直通、净不模拟器拦截、小输出放行。
 //
+// 加载契约（第 0 节）：按 opencode 真实 loader 语义校验导出形态
+// （readV1Plugin detect → resolvePluginId(file) → server()），并带负例自检；
+// 直接 import 后调 `.server()` 会漏掉「path 插件缺 id 被静默跳过」等假通过。
+//
 // 运行：bun integration/deveco/smoke.test.mjs   （插件是 TS + Bun.spawn，须用 bun；tsk 在 PATH）
 // 隔离：process.env.TSK_HOME = 临时家目录，插件 spawn 的 tsk 继承它，不碰真实 ~/.tsk。
 //
@@ -11,6 +15,7 @@ import { spawnSync } from "node:child_process"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
+import { pathToFileURL } from "node:url"
 
 let passed = 0
 let failed = 0
@@ -34,15 +39,89 @@ process.env.TSK_JOURNAL_DIR = path.join(proj, ".tsk")
 const big = path.join(proj, "big.txt")
 fs.writeFileSync(big, Array.from({ length: 100 }, (_, i) => `line ${i + 1}\n`).join(""))
 
-const loadPlugin = async () => {
-  const src = fs.readFileSync(path.join(import.meta.dirname, "tsk.plugin.ts"), "utf8")
-  const mod = await import("data:text/javascript;base64," + Buffer.from(src).toString("base64"))
-  return mod.default // {id, async server({directory})}
+// —— 真实 loader 契约（对齐 packages/opencode/src/plugin/{shared,index}.ts）——
+// 必须走「文件 import → readV1Plugin(detect) → resolvePluginId(file) → server()」这条真实路径；
+// 直接 import 后调 `.server()` 会掩盖「path 插件缺 id 被静默跳过」等假通过（历史教训）。
+const pluginFile = path.join(import.meta.dirname, "tsk.plugin.ts")
+const mod = await import(pathToFileURL(pluginFile).href)
+
+const isRecord = (v) => v !== null && typeof v === "object" && !Array.isArray(v)
+const readPluginId = (id) => {
+  if (id === undefined) return undefined
+  if (typeof id !== "string") throw new TypeError("invalid id type")
+  const v = id.trim()
+  if (!v) throw new TypeError("empty id")
+  return v
+}
+const readV1Plugin = (m, kind, mode = "strict") => {
+  const value = m.default
+  if (!isRecord(value)) {
+    if (mode === "detect") return
+    throw new TypeError("must default export an object")
+  }
+  if (mode === "detect" && !("id" in value) && !("server" in value) && !("tui" in value)) return
+  const server = "server" in value ? value.server : undefined
+  const tui = "tui" in value ? value.tui : undefined
+  if (server !== undefined && typeof server !== "function") throw new TypeError("invalid server export")
+  if (tui !== undefined && typeof tui !== "function") throw new TypeError("invalid tui export")
+  if (server !== undefined && tui !== undefined) throw new TypeError("must export either server() or tui(), not both")
+  if (kind === "server" && server === undefined) throw new TypeError("must default export an object with server()")
+  return value
+}
+const resolvePluginId = (source, id) => {
+  if (source === "file") {
+    if (id) return id
+    throw new TypeError("Path plugin must export id")
+  }
+  return id
+}
+// applyPlugin 的完整流程：V2 识别 → id 校验 → server()；识别不到才走 legacy 兜底。
+async function applyContract(m, input) {
+  const plugin = readV1Plugin(m, "server", "detect")
+  if (plugin) {
+    const id = resolvePluginId("file", readPluginId(plugin.id))
+    return { hooks: await plugin.server(input), via: "v2", id }
+  }
+  // legacy：模块每个导出都必须是函数或 {server: fn}
+  for (const entry of Object.values(m)) {
+    const fn = typeof entry === "function" ? entry
+      : entry && typeof entry === "object" && typeof entry.server === "function" ? entry.server : undefined
+    if (!fn) throw new TypeError("Plugin export is not a function")
+    return { hooks: await fn(input), via: "legacy" }
+  }
+  return { hooks: {}, via: "none" }
 }
 
-const hooks = await (await loadPlugin()).server({ directory: proj })
+const applied = await applyContract(mod, { directory: proj })
+const hooks = applied.hooks
 const journ = path.join(proj, ".tsk", "injections.jsonl")
 const ctxDir = path.join(proj, ".tsk", "kb")
+
+// ===================== 0. 插件加载契约（消除「直接调 .server()」假通过） =====================
+console.log("== 插件加载契约（真实 loader 语义）==")
+ok("default 是普通对象（非函数/数组/null）", isRecord(mod.default))
+ok("default.id 是非空字符串（file 插件强制）", typeof mod.default?.id === "string" && mod.default.id.trim() !== "")
+ok("default.server 是函数", typeof mod.default?.server === "function")
+ok("不同时导出 tui", mod.default?.tui === undefined)
+ok("无多余命名导出（避免 legacy 兜底误触）", Object.keys(mod).every((k) => k === "default"))
+ok("经 V2 路径识别（未被 detect 静默跳过）", applied.via === "v2")
+ok("resolvePluginId(file) 返回非空 id（不抛 must export id）", typeof applied.id === "string" && applied.id.length > 0)
+ok("server() 返回 hooks 对象", hooks && typeof hooks["tool.execute.after"] === "function")
+
+// 负例自检：这些错误形态必须被契约拒绝（证明校验不是空转）
+const badCases = [
+  ["server 非函数", { default: { id: "x", server: 1 } }],
+  ["同时导出 server+tui", { default: { id: "x", server: () => ({}), tui: () => ({}) } }],
+  ["id 为空串（file 插件）", { default: { id: "   ", server: () => ({}) } }],
+  ["有 server 但无 id（file 插件）", { default: { server: () => ({}) } }],
+  ["有 id 但无 server", { default: { id: "x" } }],
+  ["default 无 id/server/tui", { default: { foo: 1 } }],
+]
+for (const [name, bad] of badCases) {
+  let rejected = false
+  try { await applyContract(bad, { directory: proj }) } catch { rejected = true }
+  ok(`契约负例被拒绝：${name}`, rejected)
+}
 
 // ===================== read 无损直通 =====================
 console.log("== read 无损（V7：不再骨架改写） ==")

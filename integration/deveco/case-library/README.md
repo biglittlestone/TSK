@@ -89,6 +89,13 @@ bash run-persistent.sh --only 1  # 只跑第 1 轮（从 0 实现）
 - **端到端%** = 该轮省 / 该轮会话 input tokens（`deveco export <session>`）。
 - **完成度** = `verify.sh`（`server/` 存在则 `bun test` 全绿；`app/` 存在则构建出 hap）。
 
+## 环境与额度保护（2026-10 起）
+
+- **read-CCR 默认开**：`run-persistent.sh` 在「未设置」`TSK_READ_CCR` 时自动置 `1`，保证续跑/加轮与主案例库同口径；A/B 的 off 臂显式传空串即可（`TSK_READ_CCR=""`），不会被默认值覆盖。
+- **GLM 免费额度闸门**：GLM 免费 50M tok/日。脚本按当日 `iter-*.metrics.json` 的 `session_input_tokens` 累计，达到 `TSK_GLM_DAILY_BUDGET`（默认 `50000000`）即停止；明日续跑自动跳过已完成轮次。
+- **过载退避**：命中 `overloaded / rate limit / 503` 等显式过载信号时，按 60s、240s 退避重试（`TSK_GLM_RETRIES`，默认 2 次）；仍失败则停止且**不写 metrics**，不污染收益口径。
+- **额度耗尽**：命中 `quota / 额度 / daily limit` 等信号直接停止，同样不写 metrics。
+
 ## 前置
 
 - `tsk` 在 PATH；TSK deveco 插件已装（`%USERPROFILE%\.deveco\plugin\tsk.ts`）。
