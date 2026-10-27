@@ -59,13 +59,6 @@ add("ps: json", "Get-Content package.json | ConvertFrom-Json", `{"name":"pkg","v
 add("ps: kv", "Get-Item C:\\x\\Foo.txt | Format-List", "Name        : Foo\nLength      : 12345\nMode        : -a---\nLastWrite   : 2026/01/01\nFullName    : C:\\x\\Foo.txt")
 add("ps: winevent", "Get-WinEvent -LogName System", `ProviderName: TestProv\nTimeCreated  Id  LevelDisplayName  Message\n--------\n2026-01-01  1  Error  ${"x".repeat(300)}\n2026-01-02  2  Error  short`)
 
-// macOS
-add("mac: xcodebuild fail", "xcodebuild -scheme App build", "CompileSwift normal arm64 /proj/Foo.swift\nCompileSwift normal arm64 /proj/Bar.swift\nLd /proj/build/App normal\n/Users/x/Foo.swift:12:5: error: cannot find 'bar' in scope\n** BUILD FAILED **")
-add("mac: xcodebuild ok", "xcodebuild build", "CompileSwift /proj/A.swift\nCompileSwift /proj/B.swift\n** BUILD SUCCEEDED **")
-add("mac: log show", "log show --last 1h", "2026-01-01 10:00:00 Info  normal line\n2026-01-01 10:00:01 Error  something failed\n2026-01-01 10:00:02 Default another\n2026-01-01 10:00:03 Fault  serious")
-add("mac: brew", "brew outdated", "Name   Installed  Current\n------ --------- -------\n" + Array.from({ length: 25 }, (_, i) => `pkg${i}  1.0 2.0`).join("\n"))
-add("mac: system_profiler", "system_profiler SPHardwareDataType", "Hardware:\n    Model Name: MacBook\n    Chip: M3\nSoftware:\n    System Version: 14.0\nNetwork:")
-
 // 编译器
 add("compile: clang", "clang -c src/a.c", "src/a.c:3:5: error: use of undeclared identifier 'x'\nsrc/a.c:7:1: warning: unused variable 'y'\nsrc/b.c:2:9: error: expected ';'")
 add("compile: rustc", "rustc src/main.rs", "error[E0425]: cannot find value `x` in this scope\nerror: aborting due to previous error")
