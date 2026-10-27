@@ -46,8 +46,7 @@ const { compactByCommand } = await import(pathToFileURL(tsPath).href)
 const cases = []
 const add = (name, cmd, raw) => cases.push({ name, cmd, raw })
 
-// PowerShell
-add("ps: generic table", "Get-Service", "Status   Name               DisplayName\n------   ----               -----------\n" + Array.from({ length: 30 }, (_, i) => `Running  svc${i}  Service ${i}`).join("\n"))
+// PowerShell（仅 TS 移植的白名单命令；parity 只校验 TS 与 Rust 的交叉范围）
 add("ps: plain text (no match)", "Get-ItemProperty X", "line one\nline two\n- single dash\nline four")
 add("ps: measure-object", "Get-ChildItem | Measure-Object", "Count : 42\nAverage : 3.5\nSum : 147\nMaximum : 9\nMinimum : 1")
 add("ps: get-process", "Get-Process", " NPM(K)    PM(M)   Id  ProcessName\n ------    -----   --  -----------\n" + Array.from({ length: 40 }, (_, i) => `   100     50.0  ${1000 + i}  proc${i}`).join("\n"))
@@ -59,11 +58,7 @@ add("ps: json", "Get-Content package.json | ConvertFrom-Json", `{"name":"pkg","v
 add("ps: kv", "Get-Item C:\\x\\Foo.txt | Format-List", "Name        : Foo\nLength      : 12345\nMode        : -a---\nLastWrite   : 2026/01/01\nFullName    : C:\\x\\Foo.txt")
 add("ps: winevent", "Get-WinEvent -LogName System", `ProviderName: TestProv\nTimeCreated  Id  LevelDisplayName  Message\n--------\n2026-01-01  1  Error  ${"x".repeat(300)}\n2026-01-02  2  Error  short`)
 
-// 编译器
-add("compile: clang", "clang -c src/a.c", "src/a.c:3:5: error: use of undeclared identifier 'x'\nsrc/a.c:7:1: warning: unused variable 'y'\nsrc/b.c:2:9: error: expected ';'")
-add("compile: rustc", "rustc src/main.rs", "error[E0425]: cannot find value `x` in this scope\nerror: aborting due to previous error")
-
-// 既有命令
+// 既有命令（Unix 白名单：ls/tree/find/git/grep/rg/wc/du/df/ps/curl/wget/node --test）
 add("ls", "ls -la", Array.from({ length: 60 }, (_, i) => `${i < 20 ? "drwxr-xr-x" : "-rw-r--r--"} user grp ${1000 + i} Sep 27 10:00 mod${String(i).padStart(2, "0")}`).join("\n"))
 add("git status", "git status --short", Array.from({ length: 140 }, (_, i) => (i % 3 === 0 ? `M  mod${i}.ts` : i % 3 === 1 ? `?? untracked${i}.js` : `A  added${i}.ts`)).join("\n"))
 add("git log", "git log --stat", Array.from({ length: 40 }, (_, i) => `commit ${"deadbeef" + String(i).padStart(8, "0")}\nAuthor: u\nDate:  2026-09-2${i % 9}\n\n    fix: patch ${i} thing`).join("\n\n"))
@@ -75,9 +70,7 @@ add("du", "du -sh *", `12K\t./node_modules\n${Array.from({ length: 80 }, (_, i) 
 add("df", "df -h", `Filesystem     1K-blocks    Used Available Use% Mounted on\n${Array.from({ length: 45 }, (_, i) => `/dev/sda${i}  1048576 ${i * 10} ${999999 - i * 10} ${i}% /mnt/d${i}`).join("\n")}`)
 add("ps", "ps aux", `PID USER COMMAND\n${Array.from({ length: 120 }, (_, i) => `${1000 + i} acetone cmd${i} --flag=${"z".repeat(40)} ${i}`).join("\n")}`)
 add("curl", "curl -v https://x", `* Trying 1.2.3.4...\n* Connected\n> GET / HTTP/1.1\n< HTTP/1.1 200 OK\n< content-type: text/html\n${Array.from({ length: 60 }, () => "< header line").join("\n")}\n* Connection #0 left intact`)
-add("cat", "cat someBig.log", "y".repeat(3200))
-add("hvigor", "hvigorw assembleHap", "> hvigor Starting\nCompiling entry\nERROR: ArkTS: 10605001 at entry/src/main.ets:12\nBUILD FAILED in 3 s")
-add("tests", "npx vitest run", ` RUN  v2\n Tests  0 passed | 40 failed (40)\n${Array.from({ length: 40 }, (_, i) => `✗ case ${i}\n  AssertionError`).join("\n")}`)
+add("node test", "node --test", `${Array.from({ length: 40 }, (_, i) => `✖ case ${i}\n  AssertionError`).join("\n")}\nℹ tests 41\nℹ pass 1\nℹ fail 40`)
 
 // ---------------- 对比 ----------------
 const norm = (s) => {
